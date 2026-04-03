@@ -240,15 +240,17 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
   }, []);
 
   const handleVincular = () => {
+    const code = window.prompt('Ingresa el código del otro usuario (4 dígitos):');
+    if (!code || !/^\d{4}$/.test(code.trim())) return; // código inválido: no hace nada
+
     const accepted = window.confirm(
-      '¿Aceptar Misión Conjunta?\n\nRecorran juntos entre 1km y 8km para DUPLICAR (×2) todo el XP de hoy.\n\nSi rechazan, solo ganan +100 XP.'
+      `¿Aceptar Misión Conjunta con #${code.trim()}?\n\nRecorran juntos entre 1 km y 8 km para DUPLICAR (×2) todo el XP de hoy.\n\nSi rechazan, solo suman +100 XP.`
     );
     if (accepted) {
       jointMissionActiveRef.current = true;
       jointDistanceRef.current = 0;
       setJointProgress(0);
       setJointStatus('active');
-      // Cambiar color de ruta a Cian Neón
       if (mapRef.current?.isStyleLoaded()) {
         mapRef.current.setPaintProperty('route-line', 'line-color', '#00FFFF');
       }
@@ -475,7 +477,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         <span style={{ color: speedLocked ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316' }}>
           {speedLocked ? `🔒 ${speedKmh} km/h` : `✨ ${xpPreview} XP`}
         </span>
-        <span style={{ opacity: 0.25, fontSize: '9px', alignSelf: 'center' }}>v1.3</span>
+        <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.5</span>
       </div>
 
       {/* BOTÓN ENCUENTRO DURANTE SESIÓN */}
