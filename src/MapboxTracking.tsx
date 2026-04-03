@@ -34,18 +34,27 @@ interface Props {
 
 const SESSION_KEY = 'calle_active_session';
 
+const SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 horas
+
 interface SavedSession {
   distanceKm: number;
   durationSec: number;
   lastPos: { lat: number; lon: number } | null;
   jointDistance: number;
   jointMissionActive: boolean;
+  savedAt: number;
 }
 
 function loadSession(): SavedSession | null {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as SavedSession) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SavedSession;
+    if (Date.now() - (parsed.savedAt ?? 0) > SESSION_MAX_AGE_MS) {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -107,6 +116,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         lastPos: lastPosRef.current,
         jointDistance: jointDistanceRef.current,
         jointMissionActive: jointMissionActiveRef.current,
+        savedAt: Date.now(),
       };
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     }, 30000);
@@ -263,10 +273,18 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
     const finalDuration = durationRef.current;
     const baseXp = Math.round((10 * finalDist + 2 * (finalDuration / 60)) * multiplier);
 
-    const { bonusXp, newIds } = await checkSessionMissions(
-      { distanceKm: finalDist, durationSec: finalDuration, startHour: sessionStartHourRef.current },
-      completedMissionIds, userLevel, userClass,
-    );
+    let bonusXp = 0;
+    let newIds: number[] = [];
+    let supabaseOk = false;
+    try {
+      ({ bonusXp, newIds } = await checkSessionMissions(
+        { distanceKm: finalDist, durationSec: finalDuration, startHour: sessionStartHourRef.current },
+        completedMissionIds, userLevel, userClass,
+      ));
+      supabaseOk = true;
+    } catch (e) {
+      console.warn('[handleFinish] Supabase error, keeping session:', e);
+    }
 
     const jointActive = jointMissionActiveRef.current;
     const jointRejected = jointRejectedRef.current;
@@ -298,7 +316,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
       }
     }
 
-    localStorage.removeItem(SESSION_KEY);
+    if (supabaseOk) localStorage.removeItem(SESSION_KEY);
     onFinish(finalXp, finalDist, finalDuration, finalMissionBonus, newIds);
   };
 
