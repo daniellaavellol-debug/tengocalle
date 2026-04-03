@@ -5,7 +5,7 @@ import { checkSessionMissions } from './lib/missions';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
 const SPEED_LIMIT_KMH = 60;
-const JOINT_MIN_SPEED_KMH = 1; // anti-idle: por debajo no cuenta para misión conjunta
+const JOINT_MIN_SPEED_KMH = 1;
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
@@ -33,8 +33,7 @@ interface Props {
 }
 
 const SESSION_KEY = 'calle_active_session';
-
-const SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 horas
+const SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 interface SavedSession {
   distanceKm: number;
@@ -70,23 +69,17 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
   const routeCoordsRef = useRef<[number, number][]>([]);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
 
-  // Restore session from localStorage if available
   const _saved = loadSession();
 
-  // Refs para el cálculo final (evitan stale closure en handleFinish)
   const distanceRef = useRef(_saved?.distanceKm ?? 0);
   const durationRef = useRef(_saved?.durationSec ?? 0);
   const speedRef = useRef(0);
 
-  const encounterRef = useRef(false); // encuentro registrado durante la sesión
-
-  // Refs para Misión Conjunta
   const jointMissionActiveRef = useRef(_saved?.jointMissionActive ?? false);
-  const jointRejectedRef = useRef(false);        // misión rechazada (para +100 fallback)
+  const jointRejectedRef = useRef(false);
   const jointDistanceRef = useRef(_saved?.jointDistance ?? 0);
-  const userCodeRef = useRef(Math.floor(1000 + Math.random() * 9000)); // ID 4 dígitos
+  const userCodeRef = useRef(Math.floor(1000 + Math.random() * 9000));
 
-  // Restore lastPos from saved session
   if (_saved?.lastPos && !lastPosRef.current) {
     lastPosRef.current = _saved.lastPos;
   }
@@ -98,14 +91,19 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
   const [speedKmh, setSpeedKmh] = useState(0);
   const [speedLocked, setSpeedLocked] = useState(false);
   const [finishing, setFinishing] = useState(false);
-  const [encounterDone, setEncounterDone] = useState(false); // feedback visual
-  const [socialBoost, setSocialBoost] = useState(false);     // banner x2
+  const [socialBoost, setSocialBoost] = useState(false);
 
-  // Estado de Misión Conjunta (para UI)
   const [jointProgress, setJointProgress] = useState(_saved?.jointDistance ?? 0);
   const [jointStatus, setJointStatus] = useState<'idle' | 'active' | 'rejected'>(
     _saved?.jointMissionActive ? 'active' : 'idle'
   );
+
+  // Modal states
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [codeInput, setCodeInput] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const [pendingCode, setPendingCode] = useState('');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   // Auto-Save cada 30 segundos
   useEffect(() => {
@@ -139,7 +137,6 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
     mapRef.current.on('load', () => {
       mapRef.current?.resize();
 
-      // Capa de ruta recorrida
       mapRef.current?.addSource('route', {
         type: 'geojson',
         data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} },
@@ -152,19 +149,21 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         paint: { 'line-color': '#f97316', 'line-width': 5, 'line-opacity': 0.9 },
       });
 
-      // Arrancar timer de sesión
+      // Si había misión conjunta activa al restaurar, restaurar color cian
+      if (jointMissionActiveRef.current) {
+        mapRef.current?.setPaintProperty('route-line', 'line-color', '#00FFFF');
+      }
+
       timerRef.current = setInterval(() => {
         durationRef.current += 1;
         setDurationSec(s => s + 1);
       }, 1000);
 
-      // Arrancar GPS
       if (navigator.geolocation) {
         watchIdRef.current = navigator.geolocation.watchPosition(
           (pos) => {
             const { latitude: lat, longitude: lon, speed } = pos.coords;
 
-            // Actualizar velocidad
             const kmh = speed != null ? Math.round(speed * 3.6) : speedRef.current;
             speedRef.current = kmh;
             setSpeedKmh(kmh);
@@ -172,17 +171,15 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
             const locked = kmh > SPEED_LIMIT_KMH;
             setSpeedLocked(locked);
 
-            // Acumular distancia solo si no está bloqueado por velocidad
             if (!locked) {
               if (lastPosRef.current) {
                 const d = haversineKm(lastPosRef.current.lat, lastPosRef.current.lon, lat, lon);
-                if (d > 0.003) { // filtro de ruido: mínimo 3 metros
+                if (d > 0.003) {
                   const newDist = distanceRef.current + d;
                   distanceRef.current = newDist;
                   setDistanceKm(newDist);
                   lastPosRef.current = { lat, lon };
 
-                  // Misión Conjunta: acumular si activa y velocidad ≥ 1 km/h (anti-idle)
                   if (jointMissionActiveRef.current && kmh >= JOINT_MIN_SPEED_KMH) {
                     const newJointDist = jointDistanceRef.current + d;
                     jointDistanceRef.current = newJointDist;
@@ -197,7 +194,6 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
               lastPosRef.current = { lat, lon };
             }
 
-            // Actualizar línea de ruta
             routeCoordsRef.current.push([lon, lat]);
             setRoute([...routeCoordsRef.current]);
             const source = mapRef.current?.getSource('route') as mapboxgl.GeoJSONSource;
@@ -207,7 +203,6 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
               properties: {},
             });
 
-            // Mover marcador
             if (markerRef.current) {
               markerRef.current.setLngLat([lon, lat]);
             } else {
@@ -239,13 +234,23 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
     };
   }, []);
 
-  const handleVincular = () => {
-    const code = window.prompt('Ingresa el código del otro usuario (4 dígitos):');
-    if (!code || !/^\d{4}$/.test(code.trim())) return; // código inválido: no hace nada
+  // ── Modal: paso 1 — ingresar código ──────────────────────────────────────
+  const handleCodeSubmit = () => {
+    const trimmed = codeInput.trim();
+    if (!/^\d{4}$/.test(trimmed)) {
+      setCodeError('Ingresa exactamente 4 dígitos.');
+      return;
+    }
+    setPendingCode(trimmed);
+    setShowCodeModal(false);
+    setCodeInput('');
+    setCodeError('');
+    setShowConfirmModal(true);
+  };
 
-    const accepted = window.confirm(
-      `¿Aceptar Misión Conjunta con #${code.trim()}?\n\nRecorran juntos entre 1 km y 8 km para DUPLICAR (×2) todo el XP de hoy.\n\nSi rechazan, solo suman +100 XP.`
-    );
+  // ── Modal: paso 2 — aceptar / rechazar misión ─────────────────────────────
+  const handleConfirmMission = (accepted: boolean) => {
+    setShowConfirmModal(false);
     if (accepted) {
       jointMissionActiveRef.current = true;
       jointDistanceRef.current = 0;
@@ -258,12 +263,6 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
       jointRejectedRef.current = true;
       setJointStatus('rejected');
     }
-  };
-
-  const handleEncounterDuring = () => {
-    encounterRef.current = true;
-    setEncounterDone(true);
-    setTimeout(() => setEncounterDone(false), 2500);
   };
 
   const handleFinish = async () => {
@@ -298,35 +297,58 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
     let finalMissionBonus: number;
 
     if (jointSuccess) {
-      // Misión Conjunta exitosa: ×2 todo el XP
       finalXp = Math.round((baseXp + bonusXp) * 2);
-      finalMissionBonus = 0; // ya incluido en el doble
+      finalMissionBonus = 0;
       setSocialBoost(true);
       await new Promise(r => setTimeout(r, 2000));
     } else if (hasJointMission) {
-      // Misión rechazada o fallida (< 1km o > 8km): +100 XP consolación
       finalXp = baseXp + 100;
       finalMissionBonus = bonusXp;
     } else {
-      // Sin misión conjunta: comportamiento original con encuentro social
-      const hasSocialBoost = encounterRef.current && finalDist >= 1.0;
-      finalXp = hasSocialBoost ? Math.round((baseXp + bonusXp) * 2) : baseXp;
-      finalMissionBonus = hasSocialBoost ? 0 : bonusXp;
-      if (hasSocialBoost) {
-        setSocialBoost(true);
-        await new Promise(r => setTimeout(r, 2000));
-      }
+      finalXp = baseXp;
+      finalMissionBonus = bonusXp;
     }
 
     if (supabaseOk) localStorage.removeItem(SESSION_KEY);
     onFinish(finalXp, finalDist, finalDuration, finalMissionBonus, newIds);
   };
 
-  // Preview de XP en tiempo real
   const xpPreview = Math.round((10 * distanceKm + 2 * (durationSec / 60)) * multiplier);
-
-  // Color del HUD según estado
   const hudBorderColor = speedLocked ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316';
+
+  // Estilos compartidos para modales
+  const modalOverlay: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 500,
+    background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '24px',
+  };
+  const modalBox: React.CSSProperties = {
+    background: '#0f172a', border: '2px solid #f97316',
+    borderRadius: '1.25rem', padding: '28px 24px', width: '100%', maxWidth: '340px',
+    boxShadow: '0 0 40px rgba(249,115,22,0.3)',
+  };
+  const modalTitle: React.CSSProperties = {
+    color: '#f97316', fontWeight: 900, fontSize: '18px',
+    fontStyle: 'italic', textTransform: 'uppercase', letterSpacing: '2px',
+    marginBottom: '6px',
+  };
+  const modalSub: React.CSSProperties = {
+    color: '#94a3b8', fontSize: '12px', marginBottom: '20px', lineHeight: 1.5,
+  };
+  const btnPrimary: React.CSSProperties = {
+    background: '#f97316', color: 'black', border: 'none',
+    borderRadius: '999px', padding: '12px 0', width: '100%',
+    fontWeight: 900, fontSize: '13px', textTransform: 'uppercase',
+    letterSpacing: '2px', cursor: 'pointer', fontStyle: 'italic',
+  };
+  const btnSecondary: React.CSSProperties = {
+    background: 'transparent', color: '#64748b',
+    border: '1px solid #334155', borderRadius: '999px',
+    padding: '10px 0', width: '100%', fontWeight: 700,
+    fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px',
+    cursor: 'pointer', marginTop: '10px',
+  };
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', backgroundColor: '#0f172a' }}>
@@ -351,12 +373,12 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         ← Volver
       </button>
 
-      {/* HUD SUPERIOR DERECHO: clase + ID + misión conjunta */}
+      {/* HUD SUPERIOR DERECHO */}
       <div style={{
         position: 'absolute', top: '24px', right: '16px', zIndex: 200,
         display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px',
       }}>
-        {/* Badge de clase */}
+        {/* Badge clase */}
         <div style={{
           background: '#f97316', color: 'black', borderRadius: '999px',
           padding: '6px 14px', fontWeight: 900, fontSize: '11px',
@@ -365,25 +387,27 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
           {userClass} ×{multiplier}
         </div>
 
-        {/* Misión Conjunta: idle → ID + botón VINCULAR */}
+        {/* idle: ID + VINCULAR en una línea */}
         {jointStatus === 'idle' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0',
+            background: 'rgba(0,0,0,0.85)', border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: '999px', overflow: 'hidden',
+          }}>
             <span style={{
-              background: 'rgba(0,0,0,0.85)', color: '#94a3b8',
-              borderRadius: '999px', padding: '5px 12px', fontWeight: 900,
-              fontSize: '12px', letterSpacing: '3px', fontFamily: 'monospace',
-              border: '1px solid rgba(255,255,255,0.15)',
+              color: '#94a3b8', padding: '6px 12px',
+              fontWeight: 900, fontSize: '12px', letterSpacing: '3px',
+              fontFamily: 'monospace', borderRight: '1px solid rgba(255,255,255,0.1)',
             }}>
-              #{userCodeRef.current}
+              Mi ID: #{userCodeRef.current}
             </span>
             <button
-              onClick={handleVincular}
+              onClick={() => { setShowCodeModal(true); setCodeInput(''); setCodeError(''); }}
               style={{
-                background: 'rgba(0,0,0,0.85)', color: '#00FFFF',
-                border: '2px solid #00FFFF', borderRadius: '999px',
-                padding: '5px 14px', fontWeight: 900, fontSize: '11px',
+                background: 'transparent', color: '#00FFFF',
+                border: 'none', padding: '6px 14px',
+                fontWeight: 900, fontSize: '11px',
                 textTransform: 'uppercase', letterSpacing: '1px', cursor: 'pointer',
-                boxShadow: '0 0 8px rgba(0,255,255,0.25)',
               }}
             >
               🤝 Vincular
@@ -391,7 +415,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
           </div>
         )}
 
-        {/* Misión Conjunta: active → progreso en tiempo real */}
+        {/* active: progreso cian */}
         {jointStatus === 'active' && (
           <div style={{
             background: 'rgba(0,0,0,0.9)', color: '#00FFFF',
@@ -404,7 +428,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
           </div>
         )}
 
-        {/* Misión Conjunta: rejected → indicador */}
+        {/* rejected: consolación */}
         {jointStatus === 'rejected' && (
           <div style={{
             background: 'rgba(0,0,0,0.85)', color: '#ef4444',
@@ -417,7 +441,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         )}
       </div>
 
-      {/* BANNER MISIÓN CONJUNTA x2 / CONEXIÓN CALLEJERA */}
+      {/* BANNER ×2 */}
       {socialBoost && (
         <div style={{
           position: 'absolute', top: '50%', left: '50%',
@@ -439,19 +463,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         </div>
       )}
 
-      {/* FLASH: encuentro registrado */}
-      {encounterDone && (
-        <div style={{
-          position: 'absolute', top: '90px', left: '50%', transform: 'translateX(-50%)',
-          background: 'rgba(34,197,94,0.92)', color: 'white', padding: '8px 20px',
-          borderRadius: '999px', fontWeight: 900, fontSize: '12px', zIndex: 200,
-          textTransform: 'uppercase', letterSpacing: '2px', whiteSpace: 'nowrap',
-        }}>
-          🤝 ¡Encuentro registrado!
-        </div>
-      )}
-
-      {/* AVISO DE BLOQUEO POR VELOCIDAD */}
+      {/* AVISO BLOQUEO VELOCIDAD */}
       {speedLocked && (
         <div style={{
           position: 'absolute', top: '90px', left: '50%', transform: 'translateX(-50%)',
@@ -463,7 +475,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         </div>
       )}
 
-      {/* HUD INFERIOR: distancia, tiempo, XP */}
+      {/* HUD INFERIOR */}
       <div style={{
         position: 'absolute', bottom: '110px', left: '50%', transform: 'translateX(-50%)',
         background: 'rgba(0,0,0,0.88)', color: 'white', padding: '14px 28px',
@@ -477,24 +489,8 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         <span style={{ color: speedLocked ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316' }}>
           {speedLocked ? `🔒 ${speedKmh} km/h` : `✨ ${xpPreview} XP`}
         </span>
-        <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.5</span>
+        <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.6</span>
       </div>
-
-      {/* BOTÓN ENCUENTRO DURANTE SESIÓN */}
-      <button
-        onClick={handleEncounterDuring}
-        disabled={encounterDone || encounterRef.current}
-        style={{
-          position: 'absolute', bottom: '100px', right: '20px', zIndex: 200,
-          background: encounterRef.current ? 'rgba(34,197,94,0.9)' : 'rgba(0,0,0,0.85)',
-          color: 'white', border: `2px solid ${encounterRef.current ? '#22C55E' : '#f97316'}`,
-          borderRadius: '999px', padding: '10px 16px', fontWeight: 900,
-          fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px',
-          cursor: encounterRef.current ? 'default' : 'pointer', whiteSpace: 'nowrap',
-        }}
-      >
-        {encounterRef.current ? '✓ Encuentro' : '🤝 Encuentro'}
-      </button>
 
       {/* BOTÓN FINALIZAR */}
       <button
@@ -512,6 +508,73 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
       >
         {finishing ? 'Calculando XP...' : '🏁 Finalizar Salida'}
       </button>
+
+      {/* ── MODAL 1: Ingresar código ── */}
+      {showCodeModal && (
+        <div style={modalOverlay}>
+          <div style={modalBox}>
+            <p style={modalTitle}>Vincular Usuario</p>
+            <p style={modalSub}>
+              Tu código: <strong style={{ color: '#f97316', letterSpacing: '3px' }}>#{userCodeRef.current}</strong>
+              <br />Ingresa el código de 4 dígitos de tu compañero.
+            </p>
+            <input
+              autoFocus
+              type="text"
+              inputMode="numeric"
+              maxLength={4}
+              value={codeInput}
+              onChange={e => { setCodeInput(e.target.value.replace(/\D/g, '')); setCodeError(''); }}
+              onKeyDown={e => e.key === 'Enter' && handleCodeSubmit()}
+              placeholder="0000"
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: '#1e293b', border: `2px solid ${codeError ? '#ef4444' : '#f97316'}`,
+                borderRadius: '0.75rem', color: 'white',
+                fontSize: '28px', fontWeight: 900, letterSpacing: '8px',
+                textAlign: 'center', padding: '14px 0', outline: 'none',
+                fontFamily: 'monospace', marginBottom: '8px',
+              }}
+            />
+            {codeError && (
+              <p style={{ color: '#ef4444', fontSize: '11px', textAlign: 'center', marginBottom: '12px' }}>
+                {codeError}
+              </p>
+            )}
+            <button onClick={handleCodeSubmit} style={btnPrimary}>Continuar</button>
+            <button onClick={() => setShowCodeModal(false)} style={btnSecondary}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL 2: Confirmar misión ── */}
+      {showConfirmModal && (
+        <div style={modalOverlay}>
+          <div style={{ ...modalBox, borderColor: '#00FFFF', boxShadow: '0 0 40px rgba(0,255,255,0.2)' }}>
+            <p style={{ ...modalTitle, color: '#00FFFF' }}>¿Misión Conjunta?</p>
+            <p style={{ ...modalSub, marginBottom: '10px' }}>
+              Vinculando con <strong style={{ color: '#00FFFF', letterSpacing: '3px' }}>#{pendingCode}</strong>
+            </p>
+            <p style={{ color: '#e2e8f0', fontSize: '13px', lineHeight: 1.6, marginBottom: '20px' }}>
+              Recorran juntos entre <strong style={{ color: '#00FFFF' }}>1 km y 8 km</strong> para{' '}
+              <strong style={{ color: '#f97316' }}>DUPLICAR (×2)</strong> todo el XP de hoy.
+              <br /><span style={{ color: '#64748b', fontSize: '11px' }}>Si rechazan, suman +100 XP fijos.</span>
+            </p>
+            <button
+              onClick={() => handleConfirmMission(true)}
+              style={{ ...btnPrimary, background: '#00FFFF' }}
+            >
+              🤝 Aceptar Misión
+            </button>
+            <button
+              onClick={() => handleConfirmMission(false)}
+              style={btnSecondary}
+            >
+              Rechazar (+100 XP)
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
