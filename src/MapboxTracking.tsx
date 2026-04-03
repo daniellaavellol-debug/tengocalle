@@ -489,7 +489,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, compl
         <span style={{ color: speedLocked ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316' }}>
           {speedLocked ? `🔒 ${speedKmh} km/h` : `✨ ${xpPreview} XP`}
         </span>
-        <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.6</span>
+        <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.6.1 FORCE</span>
       </div>
 
       {/* BOTÓN FINALIZAR */}
