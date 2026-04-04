@@ -4,7 +4,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { checkSessionMissions } from './lib/missions';
 import { supabase } from './supabase';
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string;
+const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_TOKEN as string) || '';
 const JOINT_MIN_SPEED_KMH = 1;
 
 // Límites anti-cheat por tribu (km/h)
@@ -544,6 +544,26 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
     onFinish(finalXp, finalDist, finalDuration, finalMissionBonus, newIds);
   };
 
+  // Guard: token de Mapbox requerido
+  if (!MAPBOX_TOKEN) {
+    return (
+      <div style={{
+        width: '100vw', height: '100vh', background: '#0a0f1a',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px',
+      }}>
+        <p style={{ color: '#ef4444', fontWeight: 900, fontSize: '18px', textTransform: 'uppercase', letterSpacing: '2px' }}>
+          ⚠️ Falta Token de Configuración
+        </p>
+        <p style={{ color: '#475569', fontSize: '12px' }}>VITE_MAPBOX_TOKEN no está definido.</p>
+        <button onClick={onBack} style={{
+          background: '#f97316', color: 'black', border: 'none', borderRadius: '999px',
+          padding: '10px 28px', fontWeight: 900, fontSize: '12px', cursor: 'pointer',
+          textTransform: 'uppercase', letterSpacing: '2px',
+        }}>← Volver</button>
+      </div>
+    );
+  }
+
   const xpPreview = Math.round((10 * distanceKm + 2 * (durationSec / 60)) * multiplier);
   const hudBorderColor = isCheating ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316';
   const activeTribeIcon = TRIBE_ICONS[userTribe] ?? '';
@@ -897,7 +917,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
             <span style={{ color: isCheating ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316' }}>
               {isCheating ? `🔒 ${speedKmh} km/h` : `✨ ${xpPreview} XP`}
             </span>
-            <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.12</span>
+            <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.14</span>
           </div>
 
           {/* BOTÓN FINALIZAR */}
