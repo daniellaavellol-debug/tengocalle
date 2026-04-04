@@ -184,9 +184,32 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
   const [codeError, setCodeError] = useState('');
   const [pendingCode, setPendingCode] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [realtimeToast, setRealtimeToast] = useState('');
 
   // Sincronizar userTribeRef cuando cambia el estado
   useEffect(() => { userTribeRef.current = userTribe; }, [userTribe]);
+
+  // Supabase Realtime: escuchar handshake de vincular
+  useEffect(() => {
+    const myCode = userCodeRef.current.toString();
+    const channel = supabase.channel('misiones')
+      .on('broadcast', { event: 'vincular' }, (payload) => {
+        if (payload.payload.targetCode === myCode) {
+          jointMissionActiveRef.current = true;
+          jointDistanceRef.current = 0;
+          setJointProgress(0);
+          setJointStatus('active');
+          if (mapRef.current?.isStyleLoaded()) {
+            mapRef.current.setPaintProperty('route-line', 'line-color', '#00FFFF');
+          }
+          setRealtimeToast('¡Tu partner te ha vinculado! Misión Cian activada.');
+          setTimeout(() => setRealtimeToast(''), 4000);
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Red: escucha online/offline + auto-sync al reconectar
   useEffect(() => {
@@ -416,7 +439,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
   };
 
   // ── Modal: paso 2 — aceptar / rechazar misión ─────────────────────────────
-  const handleConfirmMission = (accepted: boolean) => {
+  const handleConfirmMission = async (accepted: boolean) => {
     setShowConfirmModal(false);
     if (accepted) {
       jointMissionActiveRef.current = true;
@@ -426,6 +449,12 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
       if (mapRef.current?.isStyleLoaded()) {
         mapRef.current.setPaintProperty('route-line', 'line-color', '#00FFFF');
       }
+      // Handshake: notificar al partner via Realtime
+      await supabase.channel('misiones').send({
+        type: 'broadcast',
+        event: 'vincular',
+        payload: { targetCode: pendingCode },
+      }).catch(console.error);
     } else {
       jointRejectedRef.current = true;
       setJointStatus('rejected');
@@ -813,6 +842,20 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
             </div>
           )}
 
+          {/* TOAST REALTIME HANDSHAKE */}
+          {realtimeToast !== '' && (
+            <div style={{
+              position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(0,255,180,0.15)', color: '#00ffb4',
+              border: '1px solid #00ffb4', padding: '8px 20px',
+              borderRadius: '999px', fontWeight: 700, fontSize: '12px', zIndex: 210,
+              whiteSpace: 'nowrap', letterSpacing: '1px',
+              boxShadow: '0 0 14px rgba(0,255,180,0.3)',
+            }}>
+              🤝 {realtimeToast}
+            </div>
+          )}
+
           {/* TOAST OFFLINE / SYNC */}
           {offlineToast !== '' && (
             <div style={{
@@ -854,7 +897,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
             <span style={{ color: isCheating ? '#ef4444' : jointStatus === 'active' ? '#00FFFF' : '#f97316' }}>
               {isCheating ? `🔒 ${speedKmh} km/h` : `✨ ${xpPreview} XP`}
             </span>
-            <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.11</span>
+            <span style={{ opacity: 0.5, fontSize: '9px', alignSelf: 'center' }}>v1.12</span>
           </div>
 
           {/* BOTÓN FINALIZAR */}
