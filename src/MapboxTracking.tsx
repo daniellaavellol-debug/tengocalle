@@ -227,7 +227,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
             distancia: r.distanceKm,
             xp_ganado: r.xp,
             mision_conjunta: false,
-          }]).catch(console.error);
+          }]).then(null, console.error);
           onFinishRef.current(r.xp, r.distanceKm, r.durationSec, r.missionBonusXp, []);
         }
         localStorage.removeItem(OFFLINE_QUEUE_KEY);
@@ -515,7 +515,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
       distancia: finalDist,
       xp_ganado: finalXp,
       mision_conjunta: hasJointMission,
-    }]).catch(console.error);
+    }]).then(null, console.error);
 
     // Cola offline: si no hay red, guardar localmente y no llamar onFinish aún
     if (!navigator.onLine) {
@@ -724,7 +724,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
             {/* Icono de red */}
             <div style={{
               background: 'rgba(0,0,0,0.75)', borderRadius: '999px',
-              padding: '4px 10px', fontSize: '13px',
+              padding: '4px 10px',
               border: `1px solid ${isOnline ? '#22c55e' : '#ef4444'}`,
               color: isOnline ? '#22c55e' : '#ef4444',
               fontWeight: 700, fontSize: '11px', letterSpacing: '1px',
