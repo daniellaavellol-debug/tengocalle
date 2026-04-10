@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from './lib/supabase';
+import { deriveEncounterCode, ensureHandshakeCode, redeemEncounterCode } from './services/handshakeService';
 
 interface Props {
   onSuccess: () => void;
@@ -7,17 +9,47 @@ interface Props {
 }
 
 export default function EncounterModal({ onSuccess, onClose, isFirstEncounter }: Props) {
-  const [myCode] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
-  const [inputCode, setInputCode] = useState('');
-  const [phase, setPhase] = useState<'idle' | 'success'>('idle');
-  const [error, setError] = useState('');
+  const [myCode,     setMyCode]     = useState('');
+  const [userId,     setUserId]     = useState<string | null>(null);
+  const [inputCode,  setInputCode]  = useState('');
+  const [phase,      setPhase]      = useState<'idle' | 'success'>('idle');
+  const [submitting, setSubmitting] = useState(false);
+  const [error,      setError]      = useState('');
 
-  const handleSubmit = () => {
-    if (inputCode.length !== 4 || !/^\d{4}$/.test(inputCode)) {
+  // Derivar y publicar código al montar — garantiza que esté en handshake_codes
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      setUserId(user.id);
+      setMyCode(deriveEncounterCode(user.id));
+      // Asegurar que el código esté publicado en handshake_codes
+      void ensureHandshakeCode(user.id);
+    });
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!/^\d{4}$/.test(inputCode)) {
       setError('Ingresa exactamente 4 dígitos');
       return;
     }
+    if (!userId) {
+      setError('Sin sesión activa. Recarga la app.');
+      return;
+    }
+
+    setSubmitting(true);
     setError('');
+
+    // xpToAward determina cuánto registrar en actividades
+    const xpToAward = isFirstEncounter ? 200 : 50;
+    const result = await redeemEncounterCode(userId, inputCode, xpToAward);
+
+    if (!result.ok) {
+      setError(result.reason);
+      setSubmitting(false);
+      return;
+    }
+
     setPhase('success');
     onSuccess();
   };
@@ -48,14 +80,20 @@ export default function EncounterModal({ onSuccess, onClose, isFirstEncounter }:
               </button>
             </div>
 
-            {/* Mi código */}
+            {/* Mi código — estático, siempre el mismo */}
             <div className="bg-black rounded-2xl p-6 mb-6 text-center">
               <p className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-2">
                 Muéstrale este código
               </p>
-              <p className="text-5xl font-black italic tracking-[0.2em] text-orange-500">
-                {myCode}
-              </p>
+              {myCode ? (
+                <p className="text-5xl font-black italic tracking-[0.2em] text-orange-500">
+                  {myCode}
+                </p>
+              ) : (
+                <p className="text-white/20 text-sm font-black uppercase tracking-widest animate-pulse">
+                  Cargando...
+                </p>
+              )}
             </div>
 
             {/* Input del código del otro */}
@@ -70,8 +108,7 @@ export default function EncounterModal({ onSuccess, onClose, isFirstEncounter }:
                 placeholder="1234"
                 value={inputCode}
                 onChange={(e) => {
-                  const val = e.target.value.slice(0, 4);
-                  setInputCode(val);
+                  setInputCode(e.target.value.slice(0, 4));
                   setError('');
                 }}
                 className="w-full text-center text-3xl font-black tracking-[0.3em] p-4 rounded-2xl border-2 border-black/10 focus:border-orange-500 outline-none bg-black/5 text-black"
@@ -83,9 +120,10 @@ export default function EncounterModal({ onSuccess, onClose, isFirstEncounter }:
 
             <button
               onClick={handleSubmit}
-              className="w-full mt-4 bg-orange-500 text-black font-black py-5 rounded-full text-lg italic uppercase tracking-widest active:scale-95 transition-all border-none outline-none shadow-lg shadow-orange-500/30"
+              disabled={submitting}
+              className="w-full mt-4 bg-orange-500 text-black font-black py-5 rounded-full text-lg italic uppercase tracking-widest active:scale-95 transition-all border-none outline-none shadow-lg shadow-orange-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              CONFIRMAR ENCUENTRO
+              {submitting ? 'Verificando...' : 'CONFIRMAR ENCUENTRO'}
             </button>
           </>
         ) : (

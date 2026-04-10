@@ -1,34 +1,34 @@
-interface NewlyCompleted {
-  salALaCalle: boolean;
-  aveNocturna: boolean;
-}
+import { CLASS_XP_FACTORS, TIME_XP_PER_MIN } from './utils/xpLogic';
 
 interface Props {
   xp: number;
   distanceKm: number;
   durationSec: number;
-  multiplier: number;
-  userClass: string;
-  newlyCompleted: NewlyCompleted;
-  missionBonusXp: number;
+  multiplier: number;   // round multiplier (1, 2, 4, 8) — de perfil
+  userClass: string;    // 'Runner' | 'Roller' | 'Ciclista'
+  missionBonusXp: number; // bonus raw de misiones (antes de ×mult)
   onHome: () => void;
 }
 
 function formatTime(sec: number) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
-  return m > 0 ? `${m} min ${s} seg` : `${s} seg`;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 export default function Summary({
-  xp, distanceKm, durationSec, multiplier, userClass, newlyCompleted, missionBonusXp, onHome,
+  xp, distanceKm, durationSec, multiplier, userClass, missionBonusXp, onHome,
 }: Props) {
-  const baseKmXp = Math.round(10 * distanceKm);
-  const baseMinXp = Math.round(2 * (durationSec / 60));
-  const staticBonus = (newlyCompleted.salALaCalle ? 50 : 0) + (newlyCompleted.aveNocturna ? 100 : 0);
-  const missionBonus = staticBonus + missionBonusXp;
-  const totalWithBonus = xp + missionBonus;
-  const hasBonus = missionBonus > 0;
+  // ── Componentes pre-multiplicador ────────────────────────────────────────
+  const factor     = CLASS_XP_FACTORS[userClass] ?? CLASS_XP_FACTORS.Roller;
+  const minutes    = durationSec / 60;
+  const kmXpRaw    = distanceKm * factor;
+  const minXpRaw   = minutes * TIME_XP_PER_MIN;
+  const hasMission = missionBonusXp > 0;
+
+  // xp es el ground truth calculado por calcTotalXp:
+  //   round((km×factor + min + missionBonus + encounterBonus) × mult)
+  // Lo mostramos siempre como autoridad al final.
 
   return (
     <div className="h-full w-full bg-black text-white p-6 flex flex-col overflow-y-auto pb-10">
@@ -63,32 +63,43 @@ export default function Summary({
         </div>
       </div>
 
-      {/* Desglose XP */}
+      {/* Desglose XP — espejo exacto de calcTotalXp */}
       <div className="bg-white rounded-[2.5rem] p-6 mb-4 shadow-xl text-black">
         <h3 className="font-black text-black/40 uppercase text-[10px] tracking-[0.2em] mb-4">Cálculo de XP</h3>
         <div className="space-y-3">
-          <XpRow label={`${distanceKm.toFixed(2)} km × 10 XP`} value={`+${baseKmXp} XP`} />
-          <XpRow label={`${formatTime(durationSec)} × 2 XP/min`} value={`+${baseMinXp} XP`} />
-          <XpRow label={`Clase ${userClass} (×${multiplier})`} value={`×${multiplier}`} />
 
-          <div className="border-t border-black/10 pt-3 flex justify-between items-center">
-            <span className="font-black uppercase text-sm italic tracking-tight">XP de Salida</span>
-            <span className="font-black text-orange-500 text-2xl italic">{xp} XP</span>
-          </div>
+          {/* Componentes pre-multiplicador */}
+          <XpRow
+            label={`${distanceKm.toFixed(2)} km × ${factor} XP/km`}
+            value={`+${Math.round(kmXpRaw)} XP`}
+          />
+          <XpRow
+            label={`${formatTime(durationSec)} × ${TIME_XP_PER_MIN} XP/min`}
+            value={`+${Math.round(minXpRaw)} XP`}
+          />
 
-          {newlyCompleted.salALaCalle && (
-            <MissionBonus icon="🚲" label="Misión: Sal a la Calle" bonus={50} />
-          )}
-          {newlyCompleted.aveNocturna && (
-            <MissionBonus icon="🌙" label="Misión: Ave Nocturna" bonus={100} />
-          )}
-
-          {hasBonus && (
-            <div className="border-t-2 border-orange-500 pt-3 flex justify-between items-center">
-              <span className="font-black uppercase text-sm italic tracking-tight">TOTAL</span>
-              <span className="font-black text-orange-500 text-3xl italic">{totalWithBonus} XP</span>
+          {/* Bonus de misiones — componente separado, pre-multiplicador */}
+          {hasMission && (
+            <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-2xl px-3 py-2">
+              <span className="text-[12px] text-orange-700 font-bold italic">🎯 Bonus Misiones</span>
+              <span className="font-black text-sm text-orange-600">+{missionBonusXp} XP</span>
             </div>
           )}
+
+          {/* Separador: multiplicador de vuelta */}
+          <div className="border-t border-black/10 pt-3 flex justify-between items-center">
+            <span className="text-[12px] text-black/50 font-bold italic uppercase tracking-tight">
+              Vuelta {userClass} (×{multiplier})
+            </span>
+            <span className="font-black text-sm text-black">×{multiplier}</span>
+          </div>
+
+          {/* Total autoritativo = lo que calcTotalXp devolvió */}
+          <div className="border-t-2 border-orange-500 pt-3 flex justify-between items-center">
+            <span className="font-black uppercase text-sm italic tracking-tight">TOTAL</span>
+            <span className="font-black text-orange-500 text-3xl italic">{xp} XP</span>
+          </div>
+
         </div>
       </div>
 
@@ -107,21 +118,6 @@ function XpRow({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between items-center">
       <span className="text-[12px] text-black/60 font-bold italic">{label}</span>
       <span className="font-black text-sm text-black">{value}</span>
-    </div>
-  );
-}
-
-function MissionBonus({ icon, label, bonus }: { icon: string; label: string; bonus: number }) {
-  return (
-    <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-2xl p-3">
-      <div className="flex items-center gap-2">
-        <span>{icon}</span>
-        <div>
-          <p className="text-[10px] font-black text-green-700 uppercase tracking-wider">¡Misión Completada!</p>
-          <p className="text-xs font-bold text-black/70 italic">{label}</p>
-        </div>
-      </div>
-      <span className="font-black text-green-600 italic">+{bonus} XP</span>
     </div>
   );
 }

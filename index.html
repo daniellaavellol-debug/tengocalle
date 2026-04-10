@@ -15,6 +15,8 @@
     <link rel="apple-touch-icon" href="/icon-192.svg" />
 
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Estilos críticos inline: garantizan fondo negro incluso si el CDN de Tailwind falla -->
+    <style>html,body{background:#000;margin:0;padding:0;height:100%}#root{height:100%}</style>
   </head>
   <body class="bg-black m-0 p-0">
     <div id="root"></div>

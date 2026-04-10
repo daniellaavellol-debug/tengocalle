@@ -1,22 +1,30 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import EncounterModal from './EncounterModal';
-import MisionesPanel from './components/MisionesPanel';
-import type { Missions } from './App';
+import MissionOfDay from './components/MissionOfDay';
+import { getStreakDisplay } from './utils/streakLogic';
 
 interface Props {
   userName: string;
   userClass: string;
   totalXp: number;
   userLevel: number;
-  missions: Missions;
-  completedMissionIds: number[];
+  encounters: number;
   onStart: () => void;
   onEncounter: () => void;
+  onMissions: () => void;
 }
 
-export default function Home({ userName, userClass, totalXp, userLevel, missions, completedMissionIds, onStart, onEncounter }: Props) {
+export default function Home({ userName, userClass, totalXp, userLevel, encounters, onStart, onEncounter, onMissions }: Props) {
   const [showEncounter, setShowEncounter] = useState(false);
-  const [showMisiones, setShowMisiones] = useState(false);
+
+  // Leer racha directamente de localStorage al montar — siempre refleja el último valor real
+  const [streak, setStreak] = useState(0);
+  const [completedToday, setCompletedToday] = useState(false);
+  useEffect(() => {
+    const { count, completedToday: done } = getStreakDisplay();
+    setStreak(count);
+    setCompletedToday(done);
+  }, []);
 
   return (
     <div className="h-full w-full bg-black text-black flex flex-col overflow-hidden">
@@ -43,32 +51,44 @@ export default function Home({ userName, userClass, totalXp, userLevel, missions
               <p className="text-[9px] text-black/50 font-black uppercase tracking-widest">XP Total</p>
               <p className="text-3xl font-black text-orange-500 tracking-tighter italic">{totalXp}</p>
             </div>
-            <div className="bg-black/5 py-3 rounded-2xl">
+            <div
+              className="bg-black/5 py-3 rounded-2xl relative overflow-hidden"
+              style={completedToday ? {
+                background: 'rgba(255,95,31,0.08)',
+                boxShadow: '0 0 18px rgba(255,95,31,0.35)',
+                border: '1.5px solid rgba(255,95,31,0.4)',
+              } : {}}
+            >
               <p className="text-[9px] text-black/50 font-black uppercase tracking-widest">Racha</p>
-              <p className="text-3xl font-black text-orange-500 tracking-tighter italic">
-                0<span className="text-lg not-italic ml-1">🔥</span>
+              <p
+                className="text-3xl font-black tracking-tighter italic"
+                style={{ color: completedToday ? '#FF5F1F' : '#f97316' }}
+              >
+                {streak}
+                <span
+                  className="text-lg not-italic ml-1"
+                  style={completedToday ? { filter: 'drop-shadow(0 0 6px #FF5F1F)' } : {}}
+                >
+                  🔥
+                </span>
               </p>
+              {completedToday && (
+                <p className="text-[8px] font-black uppercase tracking-widest mt-0.5"
+                   style={{ color: '#FF5F1F' }}>
+                  ¡Hoy completada!
+                </p>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Misiones Diarias — altura acotada con scroll interno */}
-        <div className="bg-white px-5 py-4 rounded-[2rem] mb-3 shadow-xl shadow-black/20">
-          <h3 className="font-black text-black/40 uppercase text-[10px] tracking-[0.2em] mb-3">Misiones Diarias</h3>
-          <div className="space-y-3 max-h-[22vh] overflow-y-auto">
-            <MissionRow icon={missions.salALaCalle ? '✅' : '🚲'} title="Sal a la Calle"
-              desc={missions.salALaCalle ? 'COMPLETADA' : 'Inicia y finaliza una salida hoy'} xp="+50 XP" done={missions.salALaCalle} />
-            <MissionRow icon={missions.aveNocturna ? '✅' : '🌙'} title="Ave Nocturna"
-              desc={missions.aveNocturna ? 'COMPLETADA' : 'Sal después de las 18:00 hrs'} xp="+100 XP" done={missions.aveNocturna} />
-            <MissionRow icon={missions.sociable ? '✅' : '🤝'} title="Sociable"
-              desc={missions.sociable ? 'COMPLETADA' : 'Tu primer encuentro callejero'} xp="+150 XP" done={missions.sociable} last />
-          </div>
-        </div>
+        {/* Misión del Día — Supabase-driven */}
+        <MissionOfDay userClass={userClass} alreadyCompleted={false} onStart={onStart} />
 
         {/* Botones de acción — grid 2 columnas */}
         <div className="grid grid-cols-2 gap-2">
           <button
-            onClick={() => setShowMisiones(true)}
+            onClick={onMissions}
             className="bg-white text-black font-black py-4 rounded-[1.5rem] shadow-xl shadow-black/20 active:scale-95 transition-all border-none outline-none flex flex-col items-center justify-center gap-1"
           >
             <span className="text-2xl">🏅</span>
@@ -100,38 +120,13 @@ export default function Home({ userName, userClass, totalXp, userLevel, missions
 
       {showEncounter && (
         <EncounterModal
-          isFirstEncounter={!missions.sociable}
+          isFirstEncounter={encounters === 0}
           onSuccess={onEncounter}
           onClose={() => setShowEncounter(false)}
         />
       )}
 
-      <MisionesPanel
-        isOpen={showMisiones}
-        userClass={userClass}
-        totalXp={totalXp}
-        completedIds={completedMissionIds}
-        onClose={() => setShowMisiones(false)}
-      />
-    </div>
-  );
-}
-
-function MissionRow({ icon, title, desc, xp, done, last = false }: {
-  icon: string; title: string; desc: string; xp: string; done: boolean; last?: boolean;
-}) {
-  return (
-    <div className={`flex items-center gap-3 ${!last ? 'border-b border-black/5 pb-3' : ''} ${done ? 'opacity-50' : ''}`}>
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg shadow-inner flex-shrink-0 ${done ? 'bg-green-100' : 'bg-orange-100'}`}>
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="font-black text-sm italic tracking-tight leading-none uppercase truncate">{title}</p>
-        <p className="text-[10px] text-black/50 font-bold italic uppercase tracking-tight mt-0.5">{desc}</p>
-      </div>
-      <div className={`font-black text-sm italic flex-shrink-0 ${done ? 'text-green-500' : 'text-orange-500'}`}>
-        {done ? '✓' : xp}
-      </div>
+      {/* MisionesPanel reemplazado por MissionsScreen (navegación via App.tsx) */}
     </div>
   );
 }

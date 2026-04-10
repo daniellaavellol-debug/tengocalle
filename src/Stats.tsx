@@ -83,26 +83,6 @@ export default function Stats({ user }: Props) {
         />
       </div>
 
-      {/* Misiones */}
-      <div className="bg-white text-black rounded-[2.5rem] p-6 shadow-xl shadow-black/20">
-        <h3 className="font-black text-black/40 uppercase text-[10px] tracking-[0.2em] mb-4">
-          Estado de Misiones
-        </h3>
-        <div className="space-y-3">
-          <MissionStatus
-            icon="🚲" label="Sal a la Calle" done={user.missions.salALaCalle}
-            desc="Inicia y finaliza una salida" xp={50}
-          />
-          <MissionStatus
-            icon="🌙" label="Ave Nocturna" done={user.missions.aveNocturna}
-            desc="Sal después de las 18:00 hrs" xp={100}
-          />
-          <MissionStatus
-            icon="🤝" label="Sociable" done={user.missions.sociable}
-            desc="Tu primer encuentro callejero" xp={150} last
-          />
-        </div>
-      </div>
     </div>
   );
 }
@@ -120,22 +100,3 @@ function StatCard({ icon, label, value, unit }: {
   );
 }
 
-function MissionStatus({ icon, label, desc, done, xp, last = false }: {
-  icon: string; label: string; desc: string; done: boolean; xp: number; last?: boolean;
-}) {
-  return (
-    <div className={`flex items-center gap-3 ${!last ? 'border-b border-black/5 pb-3' : ''} ${done ? 'opacity-50' : ''}`}>
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg flex-shrink-0
-        ${done ? 'bg-green-100' : 'bg-orange-100'}`}>
-        {done ? '✅' : icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="font-black text-sm italic uppercase leading-none tracking-tight">{label}</p>
-        <p className="text-[11px] text-black/50 font-bold italic uppercase">{done ? 'COMPLETADA' : desc}</p>
-      </div>
-      <span className={`font-black text-sm italic flex-shrink-0 ${done ? 'text-green-500' : 'text-orange-500'}`}>
-        {done ? '✓' : `+${xp} XP`}
-      </span>
-    </div>
-  );
-}

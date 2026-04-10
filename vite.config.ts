@@ -3,6 +3,29 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  resolve: {
+    // Garantiza una sola instancia de React en el bundle.
+    // Sin esto, @supabase/auth-ui-react puede traer su propia copia y
+    // romper las Reglas de los Hooks con "Cannot read properties of null (reading 'useState')".
+    dedupe: ['react', 'react-dom'],
+  },
+
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('mapbox-gl'))   return 'vendor-mapbox';
+          if (id.includes('@supabase'))   return 'vendor-supabase';
+          if (id.includes('posthog-js'))  return 'vendor-posthog';
+          if (id.includes('react'))       return 'vendor-react';
+          return 'vendor-others';
+        },
+      },
+    },
+    chunkSizeWarningLimit: 700, // mapbox-gl supera el default de 500 KB
+  },
+
   plugins: [
     react(),
     VitePWA({
@@ -37,6 +60,7 @@ export default defineConfig({
       },
 
       workbox: {
+        cacheId: 'calle-cache-v1-22',
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB — necesario por mapbox-gl
         clientsClaim: true,
@@ -63,7 +87,7 @@ export default defineConfig({
           },
           // Supabase — NetworkFirst (datos en tiempo real primero, cache como fallback)
           {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+            urlPattern: /^https:\/\/.*\.supabase\.co\/(?!auth\/).*/i,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'supabase-api',

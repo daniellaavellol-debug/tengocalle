@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import type {
-  Mission, UserMission, MissionWithProgress, Difficulty, MissionType,
-} from '../types/missions';
+import type { Mission, UserMission, MissionWithProgress } from '../types/missions';
+
 // ─── Helpers de query ─────────────────────────────────────────────────────────
 
 /**
  * Genera el string OR para Supabase que cubre todos los casos de tribu:
  *   - Tribu del usuario (ilike = case-insensitive)
- *   - Misiones universales: 'all', 'todas', 'Todas' (inglés/español, cualquier casing)
+ *   - Misiones universales: 'all', 'todas' (inglés/español, cualquier casing)
  *   - Mismo chequeo para el campo legacy 'category'
  *
  * Por qué ilike y no eq: PostgREST eq es case-sensitive.
@@ -27,9 +26,8 @@ function tribeOrFilter(tribe: string): string {
 }
 
 // ─── fetchMissionOfDay ────────────────────────────────────────────────────────
-// Independiente del hook — puede usarse en MapboxTracking sin montar el hook completo.
 
-/** Seed determinista por fecha → misma misión para todos los usuarios de la misma tribu ese día. */
+/** Seed determinista por fecha → misma misión para todos los usuarios ese día. */
 function todaySeed(): number {
   const d = new Date();
   return parseInt(
@@ -53,35 +51,22 @@ export async function fetchMissionOfDay(tribe: string): Promise<Mission | null> 
 
 // ─── useMissions hook ─────────────────────────────────────────────────────────
 
-export interface MissionFilters {
-  difficulty: Difficulty | 'all';
-  type: MissionType | 'all';
-}
-
 interface UseMissionsReturn {
   missions: MissionWithProgress[];
   loading: boolean;
   error: string | null;
-  filters: MissionFilters;
-  setFilters: (f: MissionFilters) => void;
-  filteredMissions: MissionWithProgress[];
   updateMissionProgress: (missionId: number, progressValue: number) => Promise<void>;
   completeMission: (missionId: number, xpEarned: number) => Promise<void>;
   refetch: () => Promise<void>;
 }
 
 export function useMissions(userId: string | null): UseMissionsReturn {
-  const [missions,  setMissions]  = useState<MissionWithProgress[]>([]);
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState<string | null>(null);
-  const [filters,   setFilters]   = useState<MissionFilters>({ difficulty: 'all', type: 'all' });
+  const [missions, setMissions] = useState<MissionWithProgress[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    if (!userId) {
-      console.log('[useMissions] refetch abortado — sin userId');
-      setLoading(false);
-      return;
-    }
+    if (!userId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
 
@@ -91,12 +76,9 @@ export function useMissions(userId: string | null): UseMissionsReturn {
       .select('*')
       .order('created_at', { ascending: false });
 
-    // ── DEBUG: confirmar conteo antes de cualquier procesado ──────────────────
-    console.log('Misiones cargadas:', mData?.length ?? 0, '| error:', mErr);
-
     if (mErr) { setError(mErr.message); setLoading(false); return; }
 
-    // 2. Progreso del usuario en esas misiones
+    // Progreso del usuario en esas misiones
     const missionIds = (mData ?? []).map((m: Mission) => m.id);
     const { data: umData } = missionIds.length
       ? await supabase
@@ -118,32 +100,24 @@ export function useMissions(userId: string | null): UseMissionsReturn {
 
   useEffect(() => { refetch(); }, [refetch]);
 
-  // Modo catálogo abierto: no se filtra nada.
-  // Los chips de la UI usan el estado de `filters` solo para resaltar visualmente,
-  // pero aquí todas las misiones pasan siempre.
-  const filteredMissions = missions;
-
-  // ─── Mutaciones ────────────────────────────────────────────────────────────
+  // ─── Mutaciones ──────────────────────────────────────────────────────────────
   const updateMissionProgress = async (missionId: number, progressValue: number) => {
     if (!userId) return;
     const { error } = await supabase.from('user_missions').upsert(
       { user_id: userId, mission_id: missionId, status: 'in_progress', progress_value: progressValue },
       { onConflict: 'user_id,mission_id' },
     );
-    if (error) console.warn('[updateMissionProgress]', error.message);
-    else {
-      // Actualización optimista local
-      setMissions(prev => prev.map(m =>
-        m.id !== missionId ? m : {
-          ...m,
-          userMission: {
-            ...(m.userMission ?? { id: '', user_id: userId, mission_id: missionId, completed_at: null, xp_earned: 0, created_at: '' }),
-            status: 'in_progress' as const,
-            progress_value: progressValue,
-          },
+    if (error) { console.warn('[updateMissionProgress]', error.message); return; }
+    setMissions(prev => prev.map(m =>
+      m.id !== missionId ? m : {
+        ...m,
+        userMission: {
+          ...(m.userMission ?? { id: '', user_id: userId, mission_id: missionId, completed_at: null, xp_earned: 0, created_at: '' }),
+          status: 'in_progress' as const,
+          progress_value: progressValue,
         },
-      ));
-    }
+      },
+    ));
   };
 
   const completeMission = async (missionId: number, xpEarned: number) => {
@@ -156,24 +130,22 @@ export function useMissions(userId: string | null): UseMissionsReturn {
       },
       { onConflict: 'user_id,mission_id' },
     );
-    if (error) console.warn('[completeMission]', error.message);
-    else {
-      setMissions(prev => prev.map(m =>
-        m.id !== missionId ? m : {
-          ...m,
-          userMission: {
-            ...(m.userMission ?? { id: '', user_id: userId, mission_id: missionId, created_at: '' }),
-            status: 'completed' as const,
-            progress_value: 100,
-            completed_at: now,
-            xp_earned: xpEarned,
-          },
+    if (error) { console.warn('[completeMission]', error.message); return; }
+    setMissions(prev => prev.map(m =>
+      m.id !== missionId ? m : {
+        ...m,
+        userMission: {
+          ...(m.userMission ?? { id: '', user_id: userId, mission_id: missionId, created_at: '' }),
+          status: 'completed' as const,
+          progress_value: 100,
+          completed_at: now,
+          xp_earned: xpEarned,
         },
-      ));
-    }
+      },
+    ));
   };
 
-  return { missions, loading, error, filters, setFilters, filteredMissions, updateMissionProgress, completeMission, refetch };
+  return { missions, loading, error, updateMissionProgress, completeMission, refetch };
 }
 
 // ─── Helpers exportados para MapboxTracking ───────────────────────────────────
@@ -222,9 +194,9 @@ export function evaluateSessionMissions(
       const type   = m.type ?? m.condition_type ?? '';
       let progress = 0;
       switch (type) {
-        case 'distance':    case 'distance_km':  progress = ctx.distanceKm;          break;
-        case 'duration':    case 'duration_min': progress = ctx.durationSec / 60;    break;
-        case 'time_of_day': case 'hour_gte':     progress = ctx.startHour;           break;
+        case 'distance':    case 'distance_km':  progress = ctx.distanceKm;       break;
+        case 'duration':    case 'duration_min': progress = ctx.durationSec / 60; break;
+        case 'time_of_day': case 'hour_gte':     progress = ctx.startHour;        break;
         default: return null;
       }
       return { mission: m, completed: progress >= target };
