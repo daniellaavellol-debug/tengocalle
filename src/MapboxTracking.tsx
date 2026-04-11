@@ -6,12 +6,13 @@ import { batchUpdateProgress, fetchMissionsByTribe, evaluateSessionMissions } fr
 import {
   deriveEncounterCode,
   lookupReceiverByCode,
-  createHandshakeRequest,
+  confirmEncuentro,
+  subscribeToEncuentroUpdates,
   respondToHandshake,
   ensureEncounterCode,
   type HandshakeRequest,
 } from './services/handshakeService';
-import { useHandshakeListener, watchHandshakeResponse } from './hooks/useHandshakeListener';
+import { useHandshakeListener } from './hooks/useHandshakeListener';
 import { supabase } from './lib/supabase';
 import { getStreakDisplay, updateStreak } from './utils/streakLogic';
 import { calcTotalXp, calcXpPreview } from './utils/xpLogic';
@@ -151,7 +152,7 @@ function loadSession(): SavedSession | null {
 
 const TRIBES = ['Runner', 'Ciclista', 'Roller'] as const;
 
-export default function MapboxTracking({ multiplier, userClass, userLevel, userXp, userId, userName, completedMissionIds, startJointMission, onJointMissionStarted, onFinish, onBack }: Props) {
+export default function MapboxTracking({ multiplier, userClass, userLevel, userXp, userId, userName: _userName, completedMissionIds, startJointMission, onJointMissionStarted, onFinish, onBack }: Props) {
   const sessionStartHourRef = useRef(new Date().getHours());
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -677,27 +678,21 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
     setTimeout(() => setRealtimeToast(''), 4000);
   };
 
-  // ── Handshake rechazado (A detecta UPDATE 'rejected') ────────────────────
+  // ── Handshake rechazado (A detecta UPDATE 'rejected'/'expired') ─────────────
+  // XP base (+50) ya fue otorgado por confirmEncuentro() al crear el encuentro.
   const handleHandshakeRejected = () => {
     waitingCleanupRef.current?.();
     waitingCleanupRef.current = null;
     setWaitingHandshake(null);
     setJointStatus('rejected');
-    setRealtimeToast('Tu compañero rechazó la misión conjunta.');
+    setRealtimeToast('Tu compañero rechazó la misión conjunta. +50 XP base garantizados.');
     setTimeout(() => setRealtimeToast(''), 4000);
-
-    // 50 XP por haber tenido contacto social, aunque B rechazó
-    if (userIdRef.current) {
-      void supabase.from('actividades').insert({
-        user_id:         userIdRef.current,
-        xp_ganado:       50,
-        distancia:       0,
-        mision_conjunta: false,
-      });
-    }
   };
 
-  // ── Modal paso 1: A ingresa código de B → busca receptor → crea request ──
+  // ── Modal paso 1: A ingresa código de B → busca receptor → confirma encuentro ──
+  // Usa el mismo flujo que Home: INSERT en encuentros (status=pending) +
+  // grantXP +50 a ambos. B recibe el pop-up naranja de EncuentroPopup
+  // sin importar en qué pantalla esté (componente montado globalmente en App.tsx).
   const handleCodeSubmit = async () => {
     const trimmed = codeInput.trim();
     if (!/^\d{4}$/.test(trimmed)) {
@@ -713,7 +708,7 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
     setCodeSubmitting(true);
     setCodeError('');
 
-    // 1. Buscar receptor por código
+    // 1. Buscar receptor por código en handshake_codes
     const receiver = await lookupReceiverByCode(trimmed);
     if (!receiver) {
       setCodeError('Código no encontrado. Pídele a tu compañero que abra la app.');
@@ -721,10 +716,10 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
       return;
     }
 
-    // 2. Crear request en BD
-    const result = await createHandshakeRequest(userId, userName, receiver.id);
-    if ('error' in result) {
-      setCodeError('Error al enviar invitación. Intenta de nuevo.');
+    // 2. Confirmar encuentro — INSERT en encuentros + grantXP +50 base a ambos
+    const result = await confirmEncuentro(receiver.id, trimmed);
+    if (!result.success) {
+      setCodeError(result.error ?? 'Error al enviar invitación. Intenta de nuevo.');
       setCodeSubmitting(false);
       return;
     }
@@ -733,15 +728,20 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
     setShowCodeModal(false);
     setCodeInput('');
     setCodeSubmitting(false);
-    setWaitingHandshake({ requestId: result.requestId, receiverName: receiver.name });
+    setWaitingHandshake({ requestId: result.encuentroId!, receiverName: receiver.name });
 
-    // 4. Suscribirse a la respuesta de B
-    const cleanup = watchHandshakeResponse(
-      result.requestId,
-      handleHandshakeAccepted,
-      handleHandshakeRejected,
+    // 4. Suscribirse al UPDATE en encuentros (B acepta/rechaza desde EncuentroPopup)
+    const channel = subscribeToEncuentroUpdates(
+      result.encuentroId!,
+      (enc) => {
+        if (enc.status === 'accepted') {
+          handleHandshakeAccepted();
+        } else if (enc.status === 'rejected' || enc.status === 'expired') {
+          handleHandshakeRejected();
+        }
+      },
     );
-    waitingCleanupRef.current = cleanup;
+    waitingCleanupRef.current = () => { supabase.removeChannel(channel); };
   };
 
   // ── B responde a solicitud entrante ───────────────────────────────────────
