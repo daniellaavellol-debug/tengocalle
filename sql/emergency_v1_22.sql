@@ -131,13 +131,21 @@ CREATE POLICY "Users can view their encuentros"
 ALTER PUBLICATION supabase_realtime ADD TABLE public.encuentros;
 
 -- ── 6. Función RPC increment_xp ───────────────────────────────────────────────
+-- Llamada por grantXP() en handshakeService tras cada encuentro (+50 XP por usuario).
+-- Actualiza profiles.xp (columna denormalizada para lectura rápida) Y
+-- inserta en actividades (fuente de verdad del XP total).
 CREATE OR REPLACE FUNCTION public.increment_xp(p_user_id uuid, p_amount integer)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
+  -- 1. Actualizar XP denormalizado en profiles
   UPDATE public.profiles
-  SET    updated_at = now()
-  WHERE  id = p_user_id;
-  -- XP se persiste en actividades, no en profiles; este RPC es hook para futuro.
+  SET xp         = COALESCE(xp, 0) + p_amount,
+      updated_at = now()
+  WHERE id = p_user_id;
+
+  -- 2. Registrar en actividades (fuente de verdad para el total de XP)
+  INSERT INTO public.actividades (user_id, xp_ganado, distancia, mision_conjunta)
+  VALUES (p_user_id, p_amount, 0, true);
 END;
 $$;
 

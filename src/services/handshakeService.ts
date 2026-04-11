@@ -268,14 +268,15 @@ export async function lookupCode(code: string): Promise<{
       .from('handshake_codes')
       .select('user_id, code, created_at')
       .eq('code', sanitizedCode)
-      .single();
+      .maybeSingle();  // null cuando no existe — no lanza error como .single()
 
     if (error) {
-      console.log('[CALLE:Handshake] 🔍 Código no encontrado o error:', error.message);
-      return { found: false, userBId: null, error: 'Código no encontrado' };
+      console.error('[CALLE:Handshake] ❌ Error en lookup:', { message: error.message, code: error.code, hint: error.hint });
+      return { found: false, userBId: null, error: 'Error consultando el código' };
     }
 
     if (!data) {
+      console.log('[CALLE:Handshake] 🔍 Código no encontrado:', sanitizedCode);
       return { found: false, userBId: null, error: 'Código no encontrado' };
     }
 
