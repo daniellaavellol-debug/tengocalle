@@ -12,9 +12,10 @@ interface Props {
   onStart: () => void;
   onEncounter: () => void;
   onMissions: () => void;
+  onXpBonus?: (amount: number) => void;  // delegado al EncounterModal
 }
 
-export default function Home({ userName, userClass, totalXp, userLevel, encounters, onStart, onEncounter, onMissions }: Props) {
+export default function Home({ userName, userClass, totalXp, userLevel, encounters, onStart, onEncounter, onMissions, onXpBonus }: Props) {
   const [showEncounter, setShowEncounter] = useState(false);
 
   // Leer racha directamente de localStorage al montar — siempre refleja el último valor real
@@ -123,6 +124,7 @@ export default function Home({ userName, userClass, totalXp, userLevel, encounte
           isFirstEncounter={encounters === 0}
           onSuccess={onEncounter}
           onClose={() => setShowEncounter(false)}
+          onXpBonus={onXpBonus}
         />
       )}
 

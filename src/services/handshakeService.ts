@@ -313,21 +313,20 @@ export async function lookupCode(code: string): Promise<{
 
 /**
  * Usuario A confirma el encuentro.
- * Inserta en la tabla `encuentros` → dispara Realtime → B recibe pop-up.
- * Otorga XP a ambos usuarios.
+ * Inserta en encuentros con status='pending' → Realtime → B recibe pop-up.
+ * Otorga XP BASE (+50) a ambos. El bonus (+50 extra) llega si B acepta.
+ * Retorna encuentroId para que A pueda suscribirse a la respuesta de B.
  */
 export async function confirmEncuentro(
   userBId: string,
-  codeUsed: string
-): Promise<{ success: boolean; error: string | null }> {
+  codeUsed: string,
+): Promise<{ success: boolean; error: string | null; encuentroId?: string }> {
   console.log('[CALLE:Handshake] 🤝 Confirmando encuentro...');
 
   const userAId = await validateSession();
-  if (!userAId) {
-    return { success: false, error: 'Sin sesión activa' };
-  }
+  if (!userAId) return { success: false, error: 'Sin sesión activa' };
 
-  // Prevenir duplicados: verificar si ya existe un encuentro reciente entre estos dos
+  // Anti-duplicado: un encuentro por par en 24 h
   const { data: existing } = await supabase
     .from('encuentros')
     .select('id')
@@ -336,52 +335,159 @@ export async function confirmEncuentro(
     .limit(1);
 
   if (existing && existing.length > 0) {
-    console.warn('[CALLE:Handshake] ⚠️ Encuentro duplicado en últimas 24h.');
+    console.warn('[CALLE:Handshake] ⚠️ Encuentro duplicado en últimas 24 h.');
     return { success: false, error: 'Ya tuviste un encuentro con este callejero hoy' };
   }
 
-  // Crear el registro de encuentro
-  const encuentroPayload: Omit<Encuentro, 'id' | 'created_at'> = {
+  const payload = {
     user_a_id: userAId,
     user_b_id: userBId,
     code_used: String(codeUsed),
-    xp_bonus: XP_POR_ENCUENTRO,
+    xp_bonus:  XP_POR_ENCUENTRO,
+    status:    'pending',
   };
 
-  console.log('[CALLE:Handshake] 📦 Payload encuentro:', JSON.stringify(encuentroPayload, null, 2));
+  console.log('[CALLE:Handshake] 📦 Payload encuentro:', JSON.stringify(payload, null, 2));
 
   const { data, error, status } = await supabase
     .from('encuentros')
-    .insert(encuentroPayload)
-    .select()
+    .insert(payload)
+    .select('id')
     .single();
 
-  console.log('[CALLE:Handshake] 📡 Respuesta insert encuentro:', { status, hasData: !!data, hasError: !!error });
+  console.log('[CALLE:Handshake] 📡 Respuesta insert:', { status, hasData: !!data, hasError: !!error });
 
   if (error) {
     console.error('[CALLE:Handshake] ❌ Error al crear encuentro:', {
-      message: error.message,
-      code: error.code,
-      hint: error.hint,
+      message: error.message, code: error.code, hint: error.hint,
     });
     return { success: false, error: 'No se pudo registrar el encuentro' };
   }
 
-  console.log('[CALLE:Handshake] ✅ Encuentro creado:', data);
+  const encuentroId = (data as { id: string }).id;
+  console.log('[CALLE:Handshake] ✅ Encuentro creado — id:', encuentroId);
 
-  // Otorgar XP a ambos jugadores
+  // XP BASE garantizado para ambos (independientemente de si B acepta)
   await grantXP(userAId, XP_POR_ENCUENTRO);
   await grantXP(userBId, XP_POR_ENCUENTRO);
 
-  // Limpiar el código usado de B
-  await supabase
-    .from('handshake_codes')
-    .delete()
-    .eq('user_id', userBId);
+  return { success: true, error: null, encuentroId };
+}
 
-  console.log('[CALLE:Handshake] 🧹 Código de B eliminado post-encuentro.');
+// ─── USUARIO B: Aceptar encuentro ────────────────────────────────────────────
+
+/**
+ * B acepta la misión conjunta.
+ * Actualiza status → 'accepted' y otorga XP BONUS (+50 extra) a ambos.
+ */
+export async function acceptEncuentro(
+  encuentroId: string,
+): Promise<{ success: boolean; error: string | null }> {
+  console.log('[CALLE:Handshake] ✅ acceptEncuentro —', encuentroId);
+
+  const userId = await validateSession();
+  if (!userId) return { success: false, error: 'Sin sesión activa' };
+
+  // Verificar que el encuentro existe, que yo soy B y que está pending
+  const { data: enc, error: fetchErr } = await supabase
+    .from('encuentros')
+    .select('user_a_id, user_b_id, status')
+    .eq('id', encuentroId)
+    .single();
+
+  if (fetchErr || !enc) {
+    console.error('[CALLE:Handshake] ❌ Encuentro no encontrado:', fetchErr?.message);
+    return { success: false, error: 'Encuentro no encontrado' };
+  }
+  if ((enc.user_b_id as string) !== userId) {
+    console.error('[CALLE:Handshake] ❌ No eres el receptor de este encuentro');
+    return { success: false, error: 'No autorizado' };
+  }
+  if ((enc.status as string) !== 'pending') {
+    console.warn('[CALLE:Handshake] ⚠️ Encuentro ya procesado:', enc.status);
+    return { success: false, error: 'El encuentro ya fue procesado' };
+  }
+
+  const { error: updErr } = await supabase
+    .from('encuentros')
+    .update({ status: 'accepted' })
+    .eq('id', encuentroId);
+
+  if (updErr) {
+    console.error('[CALLE:Handshake] ❌ Error al aceptar:', {
+      message: updErr.message, code: updErr.code, hint: updErr.hint,
+    });
+    return { success: false, error: 'No se pudo actualizar el encuentro' };
+  }
+
+  console.log('[CALLE:Handshake] 🎉 Encuentro aceptado — otorgando XP bonus...');
+  // XP BONUS: +50 extra a cada uno (total = 100 por encuentro)
+  await grantXP(enc.user_a_id as string, XP_POR_ENCUENTRO);
+  await grantXP(enc.user_b_id as string, XP_POR_ENCUENTRO);
 
   return { success: true, error: null };
+}
+
+// ─── USUARIO B: Rechazar encuentro ───────────────────────────────────────────
+
+/**
+ * B rechaza la misión conjunta (o el sistema la expira por timeout).
+ * NO otorga XP adicional — ambos se quedan con el XP base.
+ */
+export async function rejectEncuentro(
+  encuentroId: string,
+  reason: 'rejected' | 'expired' = 'rejected',
+): Promise<{ success: boolean; error: string | null }> {
+  console.log(`[CALLE:Handshake] ❌ rejectEncuentro (${reason}) —`, encuentroId);
+
+  const userId = await validateSession();
+  if (!userId) return { success: false, error: 'Sin sesión activa' };
+
+  const { error } = await supabase
+    .from('encuentros')
+    .update({ status: reason })
+    .eq('id', encuentroId)
+    .eq('user_b_id', userId);  // solo B puede rechazar/expirar
+
+  if (error) {
+    console.error('[CALLE:Handshake] ❌ Error al rechazar encuentro:', {
+      message: error.message, code: error.code, hint: error.hint,
+    });
+    return { success: false, error: error.message };
+  }
+
+  console.log(`[CALLE:Handshake] Encuentro marcado como '${reason}'`);
+  return { success: true, error: null };
+}
+
+// ─── USUARIO A: Suscribirse a la respuesta de B ───────────────────────────────
+
+/**
+ * A se suscribe a cambios en su encuentro para saber si B aceptó o rechazó.
+ * Retorna el canal para que el caller pueda limpiarlo al desmontar.
+ */
+export function subscribeToEncuentroUpdates(
+  encuentroId: string,
+  onUpdate: (payload: { id: string; status: string; user_a_id: string; user_b_id: string }) => void,
+): RealtimeChannel {
+  console.log('[CALLE:Handshake] 📡 Suscribiendo a updates del encuentro:', encuentroId);
+
+  const channel = supabase
+    .channel(`encuentro:update:${encuentroId}`)
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'encuentros', filter: `id=eq.${encuentroId}` },
+      (event) => {
+        const row = event.new as { id: string; status: string; user_a_id: string; user_b_id: string };
+        console.log('[CALLE:Handshake] 📬 Update recibido:', row);
+        onUpdate(row);
+      },
+    )
+    .subscribe((status) => {
+      console.log('[CALLE:Handshake] 📡 Canal update estado:', status);
+    });
+
+  return channel;
 }
 
 // ─── XP ─────────────────────────────────────────────────────────────────────
@@ -475,8 +581,10 @@ export function deriveEncounterCode(userId: string): string {
 /** @deprecated — alias de ensureHandshakeCode */
 export const ensureEncounterCode = ensureHandshakeCode;
 
-/** Resultado de canje de código. */
-export type RedeemResult = { ok: true } | { ok: false; reason: string };
+/** Resultado de canje de código. Incluye encuentroId en éxito para subscriptions. */
+export type RedeemResult =
+  | { ok: true;  encuentroId: string }
+  | { ok: false; reason: string };
 
 /**
  * Busca el dueño de un código y trae su perfil.
@@ -526,20 +634,7 @@ export async function redeemEncounterCode(
     return { ok: false, reason: outcome.error ?? 'Error de red. Intenta de nuevo.' };
   }
 
-  // Acreditar XP extra si corresponde (primer encuentro tiene bonus)
-  if (xpToAward > XP_POR_ENCUENTRO) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      await supabase.from('actividades').insert({
-        user_id:         user.id,
-        xp_ganado:       xpToAward - XP_POR_ENCUENTRO,
-        distancia:       0,
-        mision_conjunta: true,
-      });
-    }
-  }
-
-  return { ok: true };
+  return { ok: true, encuentroId: outcome.encuentroId! };
 }
 
 /** Tipo de solicitud de misión conjunta (Realtime). */

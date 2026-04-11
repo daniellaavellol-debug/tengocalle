@@ -9,6 +9,7 @@ import Stats from './Stats';
 import BottomNav from './BottomNav';
 import InstallPrompt from './components/InstallPrompt';
 import JointMissionInviteModal from './components/JointMissionInviteModal';
+import EncuentroPopup from './components/EncuentroPopup';
 import { useGlobalHandshake } from './hooks/useGlobalHandshake';
 import { syncUserData } from './lib/db';
 import { calculateLevel } from './lib/xp';
@@ -270,15 +271,26 @@ export default function App() {
     setStep('home');
   };
 
+  // XP base del encuentro: siempre 50 (garantizado al confirmar el código).
+  // Si B acepta la misión conjunta, onXpBonus suma +50 extra vía EncounterModal.
   const handleEncounter = () => {
-    const bonusXp = user.encounters === 0 ? 200 : 50;
     const updated: UserData = {
       ...user,
-      totalXp:    user.totalXp + bonusXp,
+      totalXp:    user.totalXp + 50,
       encounters: user.encounters + 1,
     };
     setUser(updated);
     saveUser(updated);
+  };
+
+  // Llamado desde EncounterModal cuando B acepta (+50 bonus) o desde
+  // EncuentroPopup cuando soy B y acepto (+50 bonus).
+  const handleXpBonus = (amount: number) => {
+    setUser(prev => {
+      const updated = { ...prev, totalXp: prev.totalXp + amount };
+      saveUser(updated);
+      return updated;
+    });
   };
 
   const userLevel = calculateLevel(user.totalXp);
@@ -329,6 +341,7 @@ export default function App() {
           onStart={handleStartSession}
           onEncounter={handleEncounter}
           onMissions={() => setStep('missions')}
+          onXpBonus={handleXpBonus}
         />
       )}
 
@@ -396,6 +409,15 @@ export default function App() {
           accepting={accepting}
           onAccept={accept}
           onReject={reject}
+        />
+      )}
+
+      {/* Pop-up global de Encuentro Callejero — activo mientras haya sesión.
+          B recibe la notificación Realtime aquí, independientemente de dónde esté en la app. */}
+      {authState === 'ready' && (
+        <EncuentroPopup
+          userId={authUser?.id ?? null}
+          onXpGained={handleXpBonus}
         />
       )}
 
