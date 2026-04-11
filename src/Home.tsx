@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import EncounterModal from './EncounterModal';
 import MissionOfDay from './components/MissionOfDay';
+import EarlyAccessCard from './components/EarlyAccessCard';
 import { getStreakDisplay } from './utils/streakLogic';
 
 interface Props {
@@ -106,6 +107,9 @@ export default function Home({ userName, userClass, totalXp, userLevel, encounte
             <span className="text-[9px] text-black/40 font-bold uppercase tracking-wider">+50 XP</span>
           </button>
         </div>
+
+        {/* Early Access — feedback para usuarios en fase de pruebas */}
+        <EarlyAccessCard />
 
       </div>{/* fin área scrollable */}
 
