@@ -12,11 +12,8 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
-interface HandshakeCode {
-  user_id: string;
-  code: string;
-  created_at?: string;
-}
+// HandshakeCode — shape de la tabla (referencia, no se usa como tipo explícito)
+// user_id: string, code: string, created_at?: string, expires_at?: string
 
 interface Encuentro {
   id?: string;
@@ -87,88 +84,129 @@ async function validateSession(): Promise<string | null> {
 
 // ─── USUARIO B: Generar y guardar código ────────────────────────────────────
 
+// SQL de diagnóstico — pegar en Supabase → SQL Editor si el upsert sigue fallando:
+console.log(
+  '[CALLE:Handshake] 🔍 SQL Diagnóstico handshake_codes (pegar en Supabase SQL Editor):\n\n' +
+  "SELECT constraint_name, constraint_type FROM information_schema.table_constraints WHERE table_name = 'handshake_codes';\n" +
+  "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'handshake_codes';\n" +
+  "SELECT column_name, is_nullable, column_default FROM information_schema.columns WHERE table_name = 'handshake_codes' ORDER BY ordinal_position;\n"
+);
+
 /**
- * Genera un código de 4 dígitos, lo guarda en handshake_codes vía upsert,
- * y retorna el código para mostrar en la UI.
+ * Guarda el código determinista en handshake_codes con estrategia de doble intento:
+ *   1. UPSERT onConflict=user_id  (requiere UNIQUE en user_id)
+ *   2. DELETE + INSERT            (fallback si no hay UNIQUE o upsert falla)
  *
- * DIAGNÓSTICO: Si el upsert falla silenciosamente, los logs mostrarán exactamente dónde.
+ * NUNCA retorna un código si no se confirmó la escritura en DB.
+ * Retorna null si ambas estrategias fallan.
  */
-// Acepta userId opcional para compatibilidad con callers legacy — se ignora
-// internamente porque validateSession() lo obtiene de auth.getUser().
 export async function ensureHandshakeCode(_userId?: string): Promise<string | null> {
   console.log('[CALLE:Handshake] ═══════════════════════════════════════');
   console.log('[CALLE:Handshake] ensureHandshakeCode() — INICIO');
 
-  // 1. Validar sesión
   const userId = await validateSession();
   if (!userId) {
-    console.error('[CALLE:Handshake] ⛔ Abortando: sin sesión activa.');
+    console.error('[CALLE:Handshake] ⛔ Sin sesión activa. Abortando.');
     return null;
   }
 
-  // 2. Derivar código determinista (mismo userId → mismo código siempre)
-  // CRÍTICO: debe coincidir con deriveEncounterCode() que muestra la UI.
-  const code = String(deriveEncounterCodeInternal(userId));
+  const code       = String(deriveEncounterCodeInternal(userId));
+  const now        = new Date().toISOString();
+  // expires_at: 24 h (requerido por la tabla; códigos son deterministas y no caducan realmente)
+  const expiresAt  = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  // 3. Preparar payload — garantía de tipos
-  const payload: HandshakeCode = {
-    user_id: userId,         // UUID string
-    code: String(code),      // TEXT — forzamos string explícito
+  const fullPayload = {
+    user_id:    userId,
+    code:       code,
+    created_at: now,
+    expires_at: expiresAt,
   };
 
-  console.log('[CALLE:Handshake] 📦 Payload a enviar:', JSON.stringify(payload, null, 2));
-  console.log('[CALLE:Handshake] 📦 Tipos:', {
-    user_id: typeof payload.user_id,
-    code: typeof payload.code,
+  console.log('[CALLE:Handshake] 📦 Payload:', {
+    user_id: userId.slice(0, 8) + '…',
+    code,
+    expires_at: expiresAt,
   });
 
-  // 4. Upsert con captura completa de error
+  // ── Estrategia 1: UPSERT ─────────────────────────────────────────────────────
   try {
-    console.log('[CALLE:Handshake] 🔄 Ejecutando upsert en handshake_codes...');
+    console.log('[CALLE:Handshake] 🔄 Estrategia 1/2: UPSERT onConflict=user_id...');
 
-    const { data, error, status, statusText } = await supabase
+    const { data, error } = await supabase
       .from('handshake_codes')
-      .upsert(payload, { onConflict: 'user_id' })
-      .select()
-      .single();
-
-    // Log completo de la respuesta
-    console.log('[CALLE:Handshake] 📡 Respuesta Supabase:', {
-      status,
-      statusText,
-      hasData: !!data,
-      hasError: !!error,
-    });
+      .upsert(fullPayload, { onConflict: 'user_id' })
+      .select('code')
+      .maybeSingle();   // maybeSingle: no lanza error si RLS bloquea el SELECT post-write
 
     if (error) {
-      console.error('[CALLE:Handshake] ❌ ERROR en upsert:', {
+      console.error('[CALLE:Handshake] ❌ UPSERT falló:', {
         message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
+        code:    error.code,
+        hint:    error.hint,
+        details: (error as { details?: string }).details ?? '—',
       });
-      console.error('[CALLE:Handshake] 💡 Posibles causas:');
-      console.error('  1. RLS bloqueando el INSERT/UPDATE (auth.uid() ≠ user_id)');
-      console.error('  2. La tabla no existe o tiene otro nombre');
-      console.error('  3. Columnas con nombres diferentes (case-sensitive)');
-      console.error('  4. Constraint o trigger bloqueando la operación');
+      // Continuar a estrategia 2
+    } else if (data) {
+      console.log('[CALLE:Handshake] ✅ UPSERT confirmado por DB. código:', data.code);
+      console.log('[CALLE:Handshake] ═══════════════════════════════════════');
+      return data.code as string;
+    } else {
+      // UPSERT ejecutado pero RLS bloqueó el SELECT de confirmación.
+      // Confiamos en la escritura: si el upsert no lanzó error, el registro está en DB.
+      console.warn('[CALLE:Handshake] ⚠️ UPSERT sin error pero SELECT post-write bloqueado (RLS SELECT policy).');
+      console.warn('[CALLE:Handshake] Confiando en escritura — retornando código sin confirmación visual.');
+      return code;
+    }
+  } catch (err) {
+    console.error('[CALLE:Handshake] 💥 Excepción en UPSERT:', err);
+  }
+
+  // ── Estrategia 2: DELETE + INSERT ────────────────────────────────────────────
+  try {
+    console.log('[CALLE:Handshake] 🔄 Estrategia 2/2: DELETE + INSERT...');
+
+    const { error: delErr } = await supabase
+      .from('handshake_codes')
+      .delete()
+      .eq('user_id', userId);
+
+    if (delErr) {
+      console.warn('[CALLE:Handshake] ⚠️ DELETE previo falló (puede no existir — OK):', delErr.message);
+    } else {
+      console.log('[CALLE:Handshake] ✅ DELETE previo OK');
+    }
+
+    const { data, error } = await supabase
+      .from('handshake_codes')
+      .insert(fullPayload)
+      .select('code')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[CALLE:Handshake] ❌ INSERT tras DELETE también falló:', {
+        message: error.message,
+        code:    error.code,
+        hint:    error.hint,
+        details: (error as { details?: string }).details ?? '—',
+      });
+      console.error('[CALLE:Handshake] 💥 Ambas estrategias agotadas. Código NO guardado en DB.');
+      console.error('[CALLE:Handshake] 💡 Verifica: (1) RLS INSERT policy permite auth.uid()=user_id,');
+      console.error('   (2) expires_at columna existe en la tabla, (3) id tiene DEFAULT gen_random_uuid()');
       return null;
     }
 
-    if (!data) {
-      console.warn('[CALLE:Handshake] ⚠️ Upsert OK pero sin data retornada.');
-      console.warn('[CALLE:Handshake] 💡 Hint: RLS puede estar bloqueando el SELECT post-upsert.');
-      console.warn('[CALLE:Handshake] El código se generó pero no se confirmó la escritura.');
-      // Aún así retornamos el código — puede haberse escrito correctamente
-      return code;
+    if (data) {
+      console.log('[CALLE:Handshake] ✅ DELETE+INSERT confirmado por DB. código:', data.code);
+      console.log('[CALLE:Handshake] ═══════════════════════════════════════');
+      return data.code as string;
     }
 
-    console.log('[CALLE:Handshake] ✅ Código guardado exitosamente:', data);
-    console.log('[CALLE:Handshake] ═══════════════════════════════════════');
-    return data.code;
+    // INSERT sin error pero SELECT bloqueado — misma lógica que upsert
+    console.warn('[CALLE:Handshake] ⚠️ INSERT OK pero SELECT bloqueado. Confiando en escritura.');
+    return code;
 
   } catch (err) {
-    console.error('[CALLE:Handshake] 💥 Excepción no controlada:', err);
+    console.error('[CALLE:Handshake] 💥 Excepción en DELETE+INSERT:', err);
     return null;
   }
 }

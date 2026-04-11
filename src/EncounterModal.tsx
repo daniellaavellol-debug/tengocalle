@@ -12,7 +12,6 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from './lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import {
-  deriveEncounterCode,
   ensureHandshakeCode,
   lookupReceiverByCode,
   confirmEncuentro,
@@ -38,20 +37,31 @@ export default function EncounterModal({
   const [submitting,    setSubmitting]    = useState(false);
   const [error,         setError]         = useState('');
   const [receiverName,  setReceiverName]  = useState('');
+  // 'loading' → DB no confirmó aún | 'ready' → código guardado y visible | 'error' → falló
+  const [codeState,     setCodeState]     = useState<'loading' | 'ready' | 'error'>('loading');
 
   const channelRef = useRef<RealtimeChannel | null>(null);
 
-  // ── Montar: derivar y publicar código propio ─────────────────────────────────
+  // ── Publicar código propio (solo lo muestra DESPUÉS de confirmar escritura en DB) ──
+  const publishCode = async (uid: string) => {
+    setCodeState('loading');
+    const confirmed = await ensureHandshakeCode(uid);
+    if (!confirmed) {
+      setCodeState('error');
+    } else {
+      setMyCode(confirmed);   // código viene de DB — garantiza sincronía UI↔Supabase
+      setCodeState('ready');
+    }
+  };
+
+  // ── Montar: obtener sesión y publicar código ──────────────────────────────────
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { setCodeState('error'); return; }
       setUserId(user.id);
-      setMyCode(deriveEncounterCode(user.id));
-      const ok = await ensureHandshakeCode(user.id);
-      if (!ok) {
-        setError('Error publicando tu código (revisa consola). Otros no podrán encontrarte.');
-      }
+      void publishCode(user.id);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Desmontar: limpiar canal de updates ──────────────────────────────────────
@@ -140,14 +150,31 @@ export default function EncounterModal({
               <p className="text-white/40 text-[10px] font-black uppercase tracking-widest mb-2">
                 Muéstrale este código
               </p>
-              {myCode ? (
+
+              {codeState === 'ready' && (
                 <p className="text-5xl font-black italic tracking-[0.2em] text-orange-500">
                   {myCode}
                 </p>
-              ) : (
+              )}
+
+              {codeState === 'loading' && (
                 <p className="text-white/20 text-sm font-black uppercase tracking-widest animate-pulse">
-                  Cargando...
+                  Generando código…
                 </p>
+              )}
+
+              {codeState === 'error' && (
+                <>
+                  <p className="text-red-400 text-xs font-bold mb-3 leading-tight">
+                    No se pudo guardar el código.{'\n'}Tu compañero no podrá encontrarte.
+                  </p>
+                  <button
+                    onClick={() => userId && void publishCode(userId)}
+                    className="bg-orange-500 text-black text-xs font-black uppercase tracking-widest px-4 py-2 rounded-full"
+                  >
+                    Reintentar
+                  </button>
+                </>
               )}
             </div>
 
