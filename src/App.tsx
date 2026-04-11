@@ -75,17 +75,15 @@ function saveUser(data: UserData) {
 }
 
 interface RemoteStats {
-  total_xp:   number | null;
-  total_km:   number | null;
-  streak:     number | null;
-  encounters: number | null;
+  total_xp: number | null;
+  total_km: number | null;
+  // streak y encounters viven en localStorage — profiles no los tiene
 }
 
 /**
- * Construye el UserData fusionando tres fuentes de verdad (en orden de prioridad):
- *   1. profiles  → nombre y tribu (siempre desde Supabase)
- *   2. users     → XP, KM, streak, encuentros (Supabase gana si es mayor)
- *   3. localStorage → misiones y completedMissionIds (no están en Supabase aún)
+ * Construye el UserData fusionando dos fuentes de verdad (en orden de prioridad):
+ *   1. profiles  → nombre, tribu, total_km, xp (Supabase gana si es mayor)
+ *   2. localStorage → streak, encounters, misiones completadas
  */
 function buildUserData(
   authUser: User,
@@ -103,10 +101,11 @@ function buildUserData(
     'Callejero';
 
   // Supabase gana sobre localStorage (mayor valor = más reciente)
-  const totalXp   = Math.max(remote?.total_xp   ?? 0, saved?.totalXp   ?? 0);
-  const totalKm   = Math.max(remote?.total_km    ?? 0, saved?.totalKm   ?? 0);
-  const streak    = Math.max(remote?.streak      ?? 0, saved?.streak    ?? 0);
-  const encounters = Math.max(remote?.encounters ?? 0, saved?.encounters ?? 0);
+  const totalXp  = Math.max(remote?.total_xp ?? 0, saved?.totalXp ?? 0);
+  const totalKm  = Math.max(remote?.total_km ?? 0, saved?.totalKm ?? 0);
+  // streak y encounters solo en localStorage (columnas no disponibles en profiles)
+  const streak    = saved?.streak    ?? 0;
+  const encounters = saved?.encounters ?? 0;
 
   return {
     ...DEFAULT_USER,
@@ -177,22 +176,23 @@ export default function App() {
       0,
     );
 
-    // 3. users → KM, streak, encuentros (XP ya no viene de aquí)
-    const { data: remote, error: statsError } = await supabase
-      .from('users')
-      .select('total_km, streak, encounters')
+    // 3. profiles → total_km y xp acumulado (streak y encounters son locales)
+    const { data: statsRow, error: statsError } = await supabase
+      .from('profiles')
+      .select('total_km, xp')
       .eq('id', au.id)
       .single();
 
     if (statsError && statsError.code !== 'PGRST116') {
-      console.warn('[checkProfile:users]', statsError.message);
+      console.warn('[checkProfile:profiles:stats]', statsError.message);
     }
 
+    // XP: usar el mayor entre actividades (fuente de verdad) y profiles.xp
+    const totalXp = Math.max(totalXpFromDB, statsRow?.xp ?? 0);
+
     setUser(buildUserData(au, profile.name ?? '', profile.tribe, {
-      total_xp:   totalXpFromDB,
-      total_km:   remote?.total_km   ?? 0,
-      streak:     remote?.streak     ?? 0,
-      encounters: remote?.encounters ?? 0,
+      total_xp: totalXp,
+      total_km: statsRow?.total_km ?? 0,
     }));
     setAuthState('ready');
   };
