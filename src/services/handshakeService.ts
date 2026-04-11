@@ -35,14 +35,22 @@ interface EncuentroCallback {
 
 const CODE_LENGTH = 4;
 const XP_POR_ENCUENTRO = 50;
-const CODE_EXPIRY_MINUTES = 15;
+// Los códigos son deterministas (mismo usuario = mismo código siempre),
+// por lo que no vencen. Se deja un valor alto para no bloquear lookups.
+const CODE_EXPIRY_MINUTES = 99999;
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function generateCode(): string {
-  const code = Math.floor(1000 + Math.random() * 9000).toString();
-  console.log('[CALLE:Handshake] Código generado:', code);
-  return code;
+/**
+ * Derivación interna determinista: UUID → 4 dígitos (1000–9999).
+ * Idéntica al shim deriveEncounterCode exportado al final del archivo.
+ * Mismo userId siempre produce el mismo código — fundamental para el lookup.
+ */
+function deriveEncounterCodeInternal(userId: string): string {
+  const hex = userId.replace(/-/g, '');
+  let n = 0;
+  for (let i = 0; i < hex.length; i++) {
+    n = (((n << 5) - n) + parseInt(hex[i], 16)) >>> 0;
+  }
+  return ((n % 9000) + 1000).toString();
 }
 
 /**
@@ -98,8 +106,9 @@ export async function ensureHandshakeCode(_userId?: string): Promise<string | nu
     return null;
   }
 
-  // 2. Generar código
-  const code = generateCode();
+  // 2. Derivar código determinista (mismo userId → mismo código siempre)
+  // CRÍTICO: debe coincidir con deriveEncounterCode() que muestra la UI.
+  const code = String(deriveEncounterCodeInternal(userId));
 
   // 3. Preparar payload — garantía de tipos
   const payload: HandshakeCode = {

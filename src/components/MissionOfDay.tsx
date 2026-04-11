@@ -6,10 +6,9 @@ import { TRIBE_COLORS, DIFFICULTY_COLORS, normalizeDifficulty } from '../types/m
 interface Props {
   userClass: string;
   alreadyCompleted: boolean;
-  onStart: () => void;
 }
 
-export default function MissionOfDay({ userClass, alreadyCompleted, onStart }: Props) {
+export default function MissionOfDay({ userClass, alreadyCompleted }: Props) {
   const [mission, setMission] = useState<Mission | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -113,7 +112,7 @@ export default function MissionOfDay({ userClass, alreadyCompleted, onStart }: P
         </div>
       )}
 
-      {/* CTA */}
+      {/* Estado de la misión — sin botón propio para no duplicar el CTA del footer */}
       {alreadyCompleted ? (
         <div style={{
           width: '100%', padding: '0.6rem', borderRadius: '0.75rem', textAlign: 'center',
@@ -124,17 +123,19 @@ export default function MissionOfDay({ userClass, alreadyCompleted, onStart }: P
           ✓ Completada hoy
         </div>
       ) : (
-        <button
-          onClick={onStart}
-          style={{
-            width: '100%', padding: '0.65rem', borderRadius: '0.75rem', border: 'none',
-            background: tribeColor.bg, color: tribeColor.text,
-            fontWeight: 900, fontSize: '0.75rem', letterSpacing: '0.12em',
-            textTransform: 'uppercase', cursor: 'pointer',
-          }}
-        >
-          Iniciar Salida →
-        </button>
+        <div style={{
+          width: '100%', padding: '0.5rem 0.75rem', borderRadius: '0.75rem',
+          background: `${tribeColor.bg}18`, border: `1px solid ${tribeColor.bg}44`,
+          display: 'flex', alignItems: 'center', gap: '0.4rem',
+        }}>
+          <span style={{ fontSize: '0.65rem', color: tribeColor.bg, opacity: 0.8 }}>▶</span>
+          <span style={{
+            color: 'rgba(255,255,255,0.5)', fontWeight: 700, fontSize: '0.7rem',
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+          }}>
+            Pulsa <span style={{ color: tribeColor.bg, fontWeight: 900 }}>Iniciar Salida</span> para completarla
+          </span>
+        </div>
       )}
     </div>
   );

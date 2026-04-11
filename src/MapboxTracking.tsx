@@ -122,10 +122,28 @@ function loadSession(): SavedSession | null {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SavedSession;
+
+    // Descartar sesión vencida (> 2 horas desde savedAt)
     if (Date.now() - (parsed.savedAt ?? 0) > SESSION_MAX_AGE_MS) {
       localStorage.removeItem(SESSION_KEY);
       return null;
     }
+
+    // Sanity check: si startTime es 0 o está en el futuro, corregirlo
+    // usando durationSec como fallback. Si durationSec también es absurdo
+    // (> SESSION_MAX_AGE_MS), la sesión está corrompida — descartarla.
+    const MAX_DURATION_SEC = SESSION_MAX_AGE_MS / 1000; // 7200 s = 2 h
+    if (!parsed.startTime || parsed.startTime > Date.now()) {
+      const legacyDur = parsed.durationSec ?? 0;
+      if (legacyDur > MAX_DURATION_SEC) {
+        console.warn('[loadSession] Sesión corrompida (durationSec absurdo:', legacyDur, '). Descartando.');
+        localStorage.removeItem(SESSION_KEY);
+        return null;
+      }
+      // Reconstruir startTime desde durationSec legacy
+      parsed.startTime = Date.now() - legacyDur * 1000 - (parsed.totalPausedMs ?? 0);
+    }
+
     return parsed;
   } catch {
     return null;
@@ -158,9 +176,12 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
   const lastGpsTsRef = useRef<number | null>(null);
 
   // ── Timing basado en wall-clock ──────────────────────────────────────────────
-  // Si no hay startTime guardado, lo derivamos de durationSec legacy para compatibilidad
-  const savedStartTime = _saved?.startTime
-    ?? (_saved ? Date.now() - (_saved.durationSec ?? 0) * 1000 - (_saved.totalPausedMs ?? 0) : 0);
+  // loadSession() ya garantiza que startTime > 0 y es razonable.
+  // Guarda explícita extra: si por alguna razón llega 0 (epoch), derivamos
+  // desde durationSec para no calcular 29M minutos.
+  const savedStartTime = (_saved?.startTime && _saved.startTime > 0)
+    ? _saved.startTime
+    : (_saved ? Date.now() - Math.min(_saved.durationSec ?? 0, SESSION_MAX_AGE_MS / 1000) * 1000 - (_saved.totalPausedMs ?? 0) : 0);
   const savedTotalPausedMs  = _saved?.totalPausedMs ?? 0;
   const savedPauseStartTime = _saved?.pauseStartTime ?? null;
   const savedIsPaused       = _saved?.isPaused ?? false;

@@ -83,7 +83,7 @@ export default function Home({ userName, userClass, totalXp, userLevel, encounte
         </div>
 
         {/* Misión del Día — Supabase-driven */}
-        <MissionOfDay userClass={userClass} alreadyCompleted={false} onStart={onStart} />
+        <MissionOfDay userClass={userClass} alreadyCompleted={false} />
 
         {/* Botones de acción — grid 2 columnas */}
         <div className="grid grid-cols-2 gap-2">
