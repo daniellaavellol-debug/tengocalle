@@ -29,11 +29,6 @@ interface Props {
 }
 
 const COUNTDOWN_SEC = 30;
-const TRIBE_COLORS: Record<string, string> = {
-  Runner:   '#39FF14',
-  Ciclista: '#0047AB',
-  Roller:   '#FFD700',
-};
 
 export default function EncuentroPopup({ userId, onXpGained }: Props) {
   const [incoming,  setIncoming]  = useState<IncomingEncuentro | null>(null);
@@ -142,7 +137,6 @@ export default function EncuentroPopup({ userId, onXpGained }: Props) {
   if (!incoming) return null;
 
   const progressPct = (countdown / COUNTDOWN_SEC) * 100;
-  const accentColor  = TRIBE_COLORS[incoming.userATribe] ?? '#FF5F1F';
 
   return (
     <>

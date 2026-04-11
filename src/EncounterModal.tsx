@@ -29,7 +29,7 @@ interface Props {
 type Phase = 'idle' | 'waiting' | 'accepted' | 'finished';
 
 export default function EncounterModal({
-  onSuccess, onClose, isFirstEncounter, onXpBonus,
+  onSuccess, onClose, onXpBonus,
 }: Props) {
   const [myCode,        setMyCode]        = useState('');
   const [userId,        setUserId]        = useState<string | null>(null);

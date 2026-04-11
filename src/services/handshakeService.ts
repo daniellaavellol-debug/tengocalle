@@ -615,7 +615,7 @@ export async function lookupReceiverByCode(
 export async function redeemEncounterCode(
   _redeemerUserId: string,
   codeUsed: string,
-  xpToAward: number,
+  _xpToAward: number,
 ): Promise<RedeemResult> {
   if (!/^\d{4}$/.test(codeUsed)) {
     return { ok: false, reason: 'Código inválido — ingresa 4 dígitos' };

@@ -8,7 +8,6 @@ import {
   lookupReceiverByCode,
   createHandshakeRequest,
   respondToHandshake,
-  timeoutHandshakeRequest,
   ensureEncounterCode,
   type HandshakeRequest,
 } from './services/handshakeService';
@@ -283,7 +282,6 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
         if (t <= 1) {
           clearInterval(interval);
           // Timeout: cancelar request en DB + activar jointRejected (consolation XP)
-          void timeoutHandshakeRequest(waitingHandshake.requestId);
           waitingCleanupRef.current?.();
           waitingCleanupRef.current = null;
           setWaitingHandshake(null);
@@ -1544,7 +1542,6 @@ export default function MapboxTracking({ multiplier, userClass, userLevel, userX
               onClick={() => {
                 waitingCleanupRef.current?.();
                 waitingCleanupRef.current = null;
-                void timeoutHandshakeRequest(waitingHandshake.requestId);
                 setWaitingHandshake(null);
                 jointRejectedRef.current = true;
                 setJointStatus('rejected');
