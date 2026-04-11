@@ -18,12 +18,17 @@ export default function EncounterModal({ onSuccess, onClose, isFirstEncounter }:
 
   // Derivar y publicar código al montar — garantiza que esté en handshake_codes
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return;
       setUserId(user.id);
       setMyCode(deriveEncounterCode(user.id));
       // Asegurar que el código esté publicado en handshake_codes
-      void ensureHandshakeCode(user.id);
+      const ok = await ensureHandshakeCode(user.id);
+      if (!ok) {
+        // El error detallado ya está en consola vía ensureHandshakeCode.
+        // Mostramos feedback visible al usuario para facilitar debug en campo.
+        setError('Error publicando tu código (revisa consola). Otros no podrán encontrarte.');
+      }
     });
   }, []);
 
