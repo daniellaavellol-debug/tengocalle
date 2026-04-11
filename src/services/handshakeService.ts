@@ -7,7 +7,7 @@
  *   Usuario A (Buscador) → ingresa código → lookup → confirma → crea encuentro → B recibe pop-up
  */
 
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
@@ -85,7 +85,9 @@ async function validateSession(): Promise<string | null> {
  *
  * DIAGNÓSTICO: Si el upsert falla silenciosamente, los logs mostrarán exactamente dónde.
  */
-export async function ensureHandshakeCode(): Promise<string | null> {
+// Acepta userId opcional para compatibilidad con callers legacy — se ignora
+// internamente porque validateSession() lo obtiene de auth.getUser().
+export async function ensureHandshakeCode(_userId?: string): Promise<string | null> {
   console.log('[CALLE:Handshake] ═══════════════════════════════════════');
   console.log('[CALLE:Handshake] ensureHandshakeCode() — INICIO');
 
@@ -445,3 +447,124 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 */
+
+// ─── Compatibilidad con callers v1.21 ───────────────────────────────────────
+// Estos exports permiten que MapboxTracking, EncounterModal, useHandshake,
+// useHandshakeListener y useGlobalHandshake sigan compilando sin cambios.
+
+/** Código determinista desde UUID (djb2 hash → 1000–9999). Nunca cambia. */
+export function deriveEncounterCode(userId: string): string {
+  const hex = userId.replace(/-/g, '');
+  let n = 0;
+  for (let i = 0; i < hex.length; i++) {
+    n = (((n << 5) - n) + parseInt(hex[i], 16)) >>> 0;
+  }
+  return ((n % 9000) + 1000).toString();
+}
+
+/** @deprecated — alias de ensureHandshakeCode */
+export const ensureEncounterCode = ensureHandshakeCode;
+
+/** Resultado de canje de código. */
+export type RedeemResult = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Busca el dueño de un código y trae su perfil.
+ * Wrapper sobre lookupCode para compatibilidad con callers v1.21.
+ */
+export async function lookupReceiverByCode(
+  code: string,
+): Promise<{ id: string; name: string; tribe: string } | null> {
+  const result = await lookupCode(code);
+  if (!result.found || !result.userBId) return null;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('name, tribe')
+    .eq('id', result.userBId)
+    .maybeSingle();
+
+  return {
+    id:    result.userBId,
+    name:  (profile?.name  as string) ?? 'Callejero',
+    tribe: (profile?.tribe as string) ?? '',
+  };
+}
+
+/**
+ * Valida y registra un encuentro. Wrapper para compatibilidad con EncounterModal v1.21.
+ */
+export async function redeemEncounterCode(
+  _redeemerUserId: string,
+  codeUsed: string,
+  xpToAward: number,
+): Promise<RedeemResult> {
+  if (!/^\d{4}$/.test(codeUsed)) {
+    return { ok: false, reason: 'Código inválido — ingresa 4 dígitos' };
+  }
+
+  const lookup = await lookupCode(codeUsed);
+  if (!lookup.found || !lookup.userBId) {
+    return { ok: false, reason: lookup.error ?? 'Código no encontrado o vencido' };
+  }
+
+  const outcome = await confirmEncuentro(lookup.userBId, codeUsed);
+  if (!outcome.success) {
+    if (outcome.error?.includes('duplicado') || outcome.error?.includes('hoy')) {
+      return { ok: false, reason: 'Ya has utilizado este código anteriormente' };
+    }
+    return { ok: false, reason: outcome.error ?? 'Error de red. Intenta de nuevo.' };
+  }
+
+  // Acreditar XP extra si corresponde (primer encuentro tiene bonus)
+  if (xpToAward > XP_POR_ENCUENTRO) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from('actividades').insert({
+        user_id:         user.id,
+        xp_ganado:       xpToAward - XP_POR_ENCUENTRO,
+        distancia:       0,
+        mision_conjunta: true,
+      });
+    }
+  }
+
+  return { ok: true };
+}
+
+/** Tipo de solicitud de misión conjunta (Realtime). */
+export interface HandshakeRequest {
+  requestId:     string;
+  initiatorId:   string;
+  initiatorName: string;
+}
+
+/**
+ * Inserta una solicitud de misión conjunta en handshake_requests.
+ * Mantiene la tabla handshake_requests para el flujo Realtime de invitaciones.
+ */
+export async function createHandshakeRequest(
+  initiatorId:   string,
+  initiatorName: string,
+  receiverId:    string,
+): Promise<{ requestId: string } | { error: string }> {
+  const { data, error } = await supabase
+    .from('handshake_requests')
+    .insert({ initiator_id: initiatorId, initiator_name: initiatorName, receiver_id: receiverId })
+    .select('id')
+    .single();
+  if (error || !data) return { error: error?.message ?? 'unknown' };
+  return { requestId: data.id as string };
+}
+
+/** Responde a una solicitud de misión conjunta (Aceptar / Rechazar). */
+export async function respondToHandshake(
+  requestId: string,
+  status: 'accepted' | 'rejected',
+): Promise<void> {
+  const { error } = await supabase
+    .from('handshake_requests')
+    .update({ status })
+    .eq('id', requestId);
+  if (error) console.warn('[respondToHandshake]', error.message);
+}
