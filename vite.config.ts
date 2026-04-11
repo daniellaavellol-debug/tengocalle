@@ -60,7 +60,7 @@ export default defineConfig({
       },
 
       workbox: {
-        cacheId: 'calle-cache-v1-22',
+        cacheId: 'calle-cache-v1-23',
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff,ttf}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB — necesario por mapbox-gl
         clientsClaim: true,
